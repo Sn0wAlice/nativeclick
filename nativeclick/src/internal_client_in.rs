@@ -50,9 +50,8 @@ impl<R: ClickhouseRead + 'static> InternalClientIn<R> {
     }
 
     #[cfg(feature = "compression")]
-    async fn decompress_data(&mut self, compression: CompressionMethod) -> Result<Block> {
-        let mut reader =
-            crate::compression::DecompressionReader::new(compression, &mut self.reader);
+    async fn decompress_data(&mut self) -> Result<Block> {
+        let mut reader = crate::compression::DecompressionReader::new(&mut self.reader);
 
         let block = Block::read(&mut reader, self.server_hello.revision_version).await?;
 
@@ -60,7 +59,7 @@ impl<R: ClickhouseRead + 'static> InternalClientIn<R> {
     }
 
     #[cfg(not(feature = "compression"))]
-    async fn decompress_data(&mut self, _compression: CompressionMethod) -> Result<Block> {
+    async fn decompress_data(&mut self) -> Result<Block> {
         panic!(
             "attempted to use compression when not compiled with `compression` feature in nativeclick"
         );
@@ -73,7 +72,7 @@ impl<R: ClickhouseRead + 'static> InternalClientIn<R> {
             CompressionMethod::None => {
                 Block::read(&mut self.reader, self.server_hello.revision_version).await?
             }
-            _ => self.decompress_data(compression).await?,
+            _ => self.decompress_data().await?,
         };
 
         Ok(ServerData { table_name, block })

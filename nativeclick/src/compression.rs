@@ -10,7 +10,6 @@ use tokio::io::{AsyncRead, AsyncReadExt, ReadBuf};
 use crate::block::Block;
 use crate::internal_client_in::MAX_COMPRESSION_SIZE;
 use crate::io::ClickhouseRead;
-use crate::protocol::CompressionMethod;
 use crate::{NativeclickError, Result};
 
 pub async fn compress_block(block: Block, revision: u64) -> Result<(Vec<u8>, usize)> {
@@ -39,7 +38,33 @@ pub async fn compress_block(block: Block, revision: u64) -> Result<(Vec<u8>, usi
     Ok((compressed, raw_len))
 }
 
-pub fn decompress_block(data: &[u8], decompressed_size: u32) -> Result<Vec<u8>> {
+/// Method byte of a ZSTD frame. The server picks the codec (`network_compression_method`,
+/// `ZSTD` by default since ClickHouse 26.9), so every frame is decoded by its own method byte.
+const ZSTD_METHOD: u8 = 0x90;
+
+pub fn decompress_block(method: u8, data: &[u8], decompressed_size: u32) -> Result<Vec<u8>> {
+    let output = match method {
+        0x02 => data.to_vec(),
+        0x82 => decompress_lz4(data, decompressed_size)?,
+        ZSTD_METHOD => zstd::bulk::decompress(data, decompressed_size as usize).map_err(|e| {
+            NativeclickError::ProtocolError(format!("malformed ZSTD compressed block: {e}"))
+        })?,
+        _ => {
+            return Err(NativeclickError::ProtocolError(format!(
+                "unsupported compression method: '{method:02X}'"
+            )));
+        }
+    };
+    if output.len() != decompressed_size as usize {
+        return Err(NativeclickError::ProtocolError(format!(
+            "decompressed size mismatch: {} != {decompressed_size}",
+            output.len()
+        )));
+    }
+    Ok(output)
+}
+
+fn decompress_lz4(data: &[u8], decompressed_size: u32) -> Result<Vec<u8>> {
     let mut output = Vec::with_capacity(decompressed_size as usize + 1);
 
     let out_len = unsafe {
@@ -63,21 +88,10 @@ pub fn decompress_block(data: &[u8], decompressed_size: u32) -> Result<Vec<u8>> 
     Ok(output)
 }
 
-async fn read_compressed_blob(
-    reader: &mut impl ClickhouseRead,
-    compression: CompressionMethod,
-) -> Result<Vec<u8>> {
+async fn read_compressed_blob(reader: &mut impl ClickhouseRead) -> Result<Vec<u8>> {
     let checksum =
         ((reader.read_u64_le().await? as u128) << 64u128) | (reader.read_u64_le().await? as u128);
     let type_byte = reader.read_u8().await?;
-    if type_byte != compression.byte() {
-        return Err(NativeclickError::ProtocolError(format!(
-            "unexpected compression algorithm identifier: '{:02X}', expected {:02X} ({:?})",
-            type_byte,
-            compression.byte(),
-            compression
-        )));
-    }
     let compressed_size = reader.read_u32_le().await?;
     if compressed_size > MAX_COMPRESSION_SIZE {
         // 1 GB
@@ -90,6 +104,11 @@ async fn read_compressed_blob(
         )));
     }
     let decompressed_size = reader.read_u32_le().await?;
+    if decompressed_size > MAX_COMPRESSION_SIZE {
+        return Err(NativeclickError::ProtocolError(format!(
+            "decompressed payload too large! {decompressed_size} > {MAX_COMPRESSION_SIZE}"
+        )));
+    }
     let mut compressed = vec![0u8; compressed_size as usize];
     reader.read_exact(&mut compressed[9..]).await?;
     compressed[0] = type_byte;
@@ -101,7 +120,7 @@ async fn read_compressed_blob(
             "corrupt checksum from clickhouse '{calc_checksum:032X}' vs '{checksum:032X}'"
         )));
     }
-    let raw_block = crate::compression::decompress_block(&compressed[9..], decompressed_size)?;
+    let raw_block = decompress_block(type_byte, &compressed[9..], decompressed_size)?;
     Ok(raw_block)
 }
 
@@ -109,7 +128,6 @@ type BlockReadingFuture<R> =
     Pin<Box<dyn Future<Output = Result<(Vec<u8>, &'static mut R)>> + Send + Sync>>;
 
 pub struct DecompressionReader<'a, R: ClickhouseRead + 'static> {
-    mode: CompressionMethod,
     inner: Option<&'a mut R>,
     decompressed: Vec<u8>,
     position: usize,
@@ -117,9 +135,8 @@ pub struct DecompressionReader<'a, R: ClickhouseRead + 'static> {
 }
 
 impl<'a, R: ClickhouseRead + 'static> DecompressionReader<'a, R> {
-    pub fn new(mode: CompressionMethod, inner: &'a mut R) -> Self {
+    pub fn new(inner: &'a mut R) -> Self {
         Self {
-            mode,
             inner: Some(inner),
             decompressed: vec![],
             position: 0,
@@ -177,9 +194,8 @@ impl<R: ClickhouseRead + 'static> AsyncRead for DecompressionReader<'_, R> {
         while self.position >= self.decompressed.len() {
             let static_inner: &'static mut R =
                 unsafe { std::mem::transmute(self.inner.take().unwrap()) };
-            let mode = self.mode;
             self.block_reading_future = Some(Box::pin(async move {
-                let value = read_compressed_blob(static_inner, mode).await?;
+                let value = read_compressed_blob(static_inner).await?;
                 Ok((value, static_inner))
             }));
             match self.run_decompression(cx) {
@@ -192,5 +208,40 @@ impl<R: ClickhouseRead + 'static> AsyncRead for DecompressionReader<'_, R> {
         buf.put_slice(&self.decompressed[self.position..self.position + length]);
         self.position += length;
         Poll::Ready(Ok(()))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Wraps `payload` in a native-protocol compressed frame, as the server sends it.
+    fn frame(method: u8, payload: &[u8], decompressed_size: u32) -> Vec<u8> {
+        let mut header = vec![method];
+        header.extend_from_slice(&(payload.len() as u32 + 9).to_le_bytes());
+        header.extend_from_slice(&decompressed_size.to_le_bytes());
+        header.extend_from_slice(payload);
+        let checksum = cityhash_rs::cityhash_102_128(&header);
+        let mut out = ((checksum >> 64) as u64).to_le_bytes().to_vec();
+        out.extend_from_slice(&(checksum as u64).to_le_bytes());
+        out.extend_from_slice(&header);
+        out
+    }
+
+    #[tokio::test]
+    async fn reads_every_server_codec() {
+        let raw = b"nativeclick ".repeat(100);
+        let size = raw.len() as u32;
+        let zstd = zstd::bulk::compress(&raw, 3).unwrap();
+        let lz4 = lz4::block::compress(&raw, None, false).unwrap();
+
+        for (method, payload) in [(0x02, &raw[..]), (0x82, &lz4[..]), (0x90, &zstd[..])] {
+            let data = frame(method, payload, size);
+            let got = read_compressed_blob(&mut &data[..]).await.unwrap();
+            assert_eq!(got, raw, "method {method:02X}");
+        }
+
+        let data = frame(0x99, &raw, size);
+        assert!(read_compressed_blob(&mut &data[..]).await.is_err());
     }
 }

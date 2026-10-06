@@ -25,17 +25,16 @@ Image testée : `clickhouse/clickhouse-server:<tag>`, sur arm64. Les 13 tests d'
 | 26.5 | stable | 13/13 | ✅ | |
 | 26.6 | stable | 13/13 | ✅ | |
 | 26.7 | stable | 13/13 | ✅ | |
-| 26.8 | stable | 13/13 | ✅ | **dernière version qui fonctionne** |
-| 26.9 | stable | 1/13 | ❌ | réponses compressées en ZSTD, voir ci-dessous |
-| 26.9 + LZ4 forcé côté serveur | — | 13/13 | ✅ | contournement validé |
+| 26.8 | stable | 13/13 | ✅ | |
+| 26.9 | stable | 13/13 | ✅ | cassé avant le support ZSTD (1/13), voir ci-dessous |
 
-## Ce qui casse sur 26.9
+## Ce qui cassait sur 26.9 (corrigé)
 
 À partir de 26.9, la valeur par défaut du setting serveur `network_compression_method` passe de `LZ4` à `ZSTD` (niveau 3).
 Ce changement est listé dans les *backward-incompatible changes* du changelog 26.9 ([ClickHouse#108786](https://github.com/ClickHouse/ClickHouse/pull/108786)).
 Il ne dépend pas de la révision du protocole : même un client ancien reçoit des blocs ZSTD.
 
-Ce qui se passe côté nativeclick :
+Ce qui se passait côté nativeclick avant le correctif :
 
 - La compression est activée par défaut (feature `compression`, `CompressionMethod::default()` = LZ4, voir `nativeclick/src/protocol.rs`).
 - Le serveur répond avec des blocs dont le marqueur de méthode vaut `0x90` (ZSTD). `nativeclick/src/compression.rs` n'accepte que `0x82` (LZ4) :
@@ -50,12 +49,17 @@ Ce projet utilise `klickhouse 0.13.2`, qui a le même code de décompression, LZ
 
 ## Contournements / correctifs
 
+Le 2 est retenu et implémenté ; les autres restent pour mémoire.
+
+
 1. **Côté serveur (validé)** : remettre LZ4 dans le profil utilisateur, par exemple avec un fichier `users.d/lz4.xml` :
    ```xml
    <clickhouse><profiles><default><network_compression_method>LZ4</network_compression_method></default></profiles></clickhouse>
    ```
    Avec ce fichier, 26.9.11.2 passe à 13/13.
-2. **Côté client, propre** : supporter les blocs ZSTD (`0x90`) dans `compression.rs`. Il faudrait ajouter une dépendance `zstd`, derrière la feature `compression`.
+2. **Côté client — ✅ fait** : `compression.rs` décode chaque bloc selon son octet de méthode (`0x02` aucune, `0x82` LZ4/LZ4HC, `0x90` ZSTD ; tout autre → erreur claire), via la dépendance `zstd` derrière la feature `compression`.
+   Le client continue d'envoyer en LZ4 (le serveur accepte tout codec en entrée). La taille décompressée annoncée est maintenant plafonnée à 1 Gio et vérifiée.
+   Test unitaire : `compression::tests::reads_every_server_codec`. Matrice relancée : 26.9 à 13/13 sans contournement.
 3. **Côté client, minimal** : envoyer `network_compression_method='LZ4'` dans les settings de chaque requête.
    Aujourd'hui `internal_client_out.rs` envoie des settings vides, donc il faudrait implémenter l'envoi de settings.
 4. **Palliatif** : désactiver la compression côté client (`default-features = false` sans `compression`). Non testé.

@@ -194,7 +194,7 @@ impl<W: ClickhouseWrite> InternalClientOut<W> {
     pub async fn send_query<'a>(&mut self, params: Query<'a>) -> Result<()> {
         let revision = self.revision;
         if !params.parameters.is_empty() && revision < DBMS_MIN_PROTOCOL_VERSION_WITH_PARAMETERS {
-            return Err(crate::NativeclickError::ProtocolError(
+            return Err(crate::NativeclickError::Unsupported(
                 "query parameters need a server with protocol revision 54459 or later".to_string(),
             ));
         }
@@ -291,8 +291,6 @@ impl<W: ClickhouseWrite> InternalClientOut<W> {
         let hash = cityhash_rs::cityhash_102_128(&new_out[..]);
         self.writer.write_u64_le((hash >> 64) as u64).await?;
         self.writer.write_u64_le(hash as u64).await?;
-        // self.writer.write_u8(byte).await?;
-        // self.writer.write_u32_le(out.len() as u32).await?;
         self.writer.write_all(&new_out[..]).await?;
         Ok(())
     }

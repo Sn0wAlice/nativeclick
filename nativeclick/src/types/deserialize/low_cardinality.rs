@@ -52,7 +52,6 @@ impl Deserializer for LowCardinalityDeserializer {
                         has_additional_keys = (flags & HAS_ADDITIONAL_KEYS_BIT) != 0;
                         needs_global_dictionary = (flags & NEED_GLOBAL_DICTIONARY_BIT) != 0;
                         let needs_update_dictionary = (flags & NEED_UPDATE_DICTIONARY_BIT) != 0;
-                        // println!("flags {} {}", has_additional_keys, needs_update_dictionary);
 
                         indexed_type = match flags & 0xff {
                             TUINT8 => Type::UInt8,

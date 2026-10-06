@@ -1,0 +1,104 @@
+name: Release
+
+# Run manually (Actions > Release > Run workflow) on the branch to release. The version is the one
+# of nativeclick/Cargo.toml: both crates are published to crates.io, then the tag vX.Y.Z and the
+# GitHub release are created on the released commit.
+# Needs the repository secret CARGO_REGISTRY_TOKEN (crates.io API token with the publish-new and
+# publish-update scopes).
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  check:
+    name: Check the release
+    runs-on: ubuntu-22.04
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    services:
+      clickhouse:
+        # The version this release targets (crate 0.MAJOR.MINOR).
+        image: clickhouse/clickhouse-server:26.9
+        ports:
+          - 9000:9000
+        env:
+          CLICKHOUSE_SKIP_USER_SETUP: "1"
+        options: >-
+          --ulimit nofile=262144:262144
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # master
+        with:
+          toolchain: stable
+          components: rustfmt, clippy
+      - name: Version
+        id: version
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          crate_version() {
+            cargo metadata --no-deps --format-version 1 \
+              | jq -r --arg name "$1" '.packages[] | select(.name == $name) | .version'
+          }
+          version=$(crate_version nativeclick)
+          derive=$(crate_version nativeclick_derive)
+          echo "Releasing $version"
+          if [ "$derive" != "$version" ]; then
+            echo "::error::nativeclick_derive is $derive, nativeclick is $version: bump both"
+            exit 1
+          fi
+          grep -q "^## $version\$" CHANGELOG.md \
+            || { echo "::error::CHANGELOG.md has no '## $version' section"; exit 1; }
+          if gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/v$version" > /dev/null 2>&1; then
+            echo "::error::tag v$version already exists"
+            exit 1
+          fi
+          status=$(curl -s -o /dev/null -w '%{http_code}' -A "nativeclick-release" \
+            "https://crates.io/api/v1/crates/nativeclick/$version")
+          if [ "$status" = "200" ]; then
+            echo "::error::nativeclick $version is already on crates.io"
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      - name: Format
+        run: cargo fmt --all -- --check
+      - name: Clippy
+        run: cargo clippy --workspace --all-features --all-targets -- -D warnings
+      - name: Tests
+        run: cargo test --workspace --all-features -- --test-threads=1
+      - name: Package
+        run: cargo publish --workspace --dry-run
+
+  publish:
+    name: Publish ${{ needs.check.outputs.version }}
+    needs: check
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # master
+        with:
+          toolchain: stable
+      - name: Publish to crates.io
+        # nativeclick_derive first, then nativeclick, waiting for each to be available.
+        run: cargo publish --workspace
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+      - name: Tag and GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.check.outputs.version }}
+        run: |
+          awk -v version="## $VERSION" '$0 == version {found = 1; next} found && /^## / {exit} found' \
+            CHANGELOG.md > notes.md
+          gh release create "v$VERSION" --target "$GITHUB_SHA" --title "v$VERSION" --notes-file notes.md

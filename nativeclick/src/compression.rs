@@ -26,7 +26,7 @@ pub async fn compress_block(block: Block, revision: u64) -> Result<(Vec<u8>, usi
         )
     };
     if out_len <= 0 {
-        return Err(NativeclickError::ProtocolError(
+        return Err(NativeclickError::Compression(
             "invalid compression state".to_string(),
         ));
     }
@@ -47,16 +47,16 @@ pub fn decompress_block(method: u8, data: &[u8], decompressed_size: u32) -> Resu
         0x02 => data.to_vec(),
         0x82 => decompress_lz4(data, decompressed_size)?,
         ZSTD_METHOD => zstd::bulk::decompress(data, decompressed_size as usize).map_err(|e| {
-            NativeclickError::ProtocolError(format!("malformed ZSTD compressed block: {e}"))
+            NativeclickError::Compression(format!("malformed ZSTD compressed block: {e}"))
         })?,
         _ => {
-            return Err(NativeclickError::ProtocolError(format!(
+            return Err(NativeclickError::Compression(format!(
                 "unsupported compression method: '{method:02X}'"
             )));
         }
     };
     if output.len() != decompressed_size as usize {
-        return Err(NativeclickError::ProtocolError(format!(
+        return Err(NativeclickError::Compression(format!(
             "decompressed size mismatch: {} != {decompressed_size}",
             output.len()
         )));
@@ -76,7 +76,7 @@ fn decompress_lz4(data: &[u8], decompressed_size: u32) -> Result<Vec<u8>> {
         )
     };
     if out_len < 0 {
-        return Err(NativeclickError::ProtocolError(
+        return Err(NativeclickError::Compression(
             "malformed compressed block".to_string(),
         ));
     }
@@ -95,17 +95,17 @@ async fn read_compressed_blob(reader: &mut impl ClickhouseRead) -> Result<Vec<u8
     let compressed_size = reader.read_u32_le().await?;
     if compressed_size > MAX_COMPRESSION_SIZE {
         // 1 GB
-        return Err(NativeclickError::ProtocolError(format!(
+        return Err(NativeclickError::Compression(format!(
             "compressed payload too large! {compressed_size} > {MAX_COMPRESSION_SIZE}"
         )));
     } else if compressed_size < 9 {
-        return Err(NativeclickError::ProtocolError(format!(
+        return Err(NativeclickError::Compression(format!(
             "compressed payload too small! {compressed_size} < 9"
         )));
     }
     let decompressed_size = reader.read_u32_le().await?;
     if decompressed_size > MAX_COMPRESSION_SIZE {
-        return Err(NativeclickError::ProtocolError(format!(
+        return Err(NativeclickError::Compression(format!(
             "decompressed payload too large! {decompressed_size} > {MAX_COMPRESSION_SIZE}"
         )));
     }
@@ -116,7 +116,7 @@ async fn read_compressed_blob(reader: &mut impl ClickhouseRead) -> Result<Vec<u8
     compressed[5..9].copy_from_slice(&decompressed_size.to_le_bytes()[..]);
     let calc_checksum = cityhash_rs::cityhash_102_128(&compressed[..]);
     if calc_checksum != checksum {
-        return Err(NativeclickError::ProtocolError(format!(
+        return Err(NativeclickError::Compression(format!(
             "corrupt checksum from clickhouse '{calc_checksum:032X}' vs '{checksum:032X}'"
         )));
     }

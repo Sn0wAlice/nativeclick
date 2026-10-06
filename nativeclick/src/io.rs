@@ -33,7 +33,7 @@ impl<T: AsyncRead + Unpin + Send + Sync> ClickhouseRead for T {
     async fn read_string(&mut self) -> Result<Vec<u8>> {
         let len = self.read_var_uint().await?;
         if len as usize > MAX_STRING_SIZE {
-            return Err(NativeclickError::ProtocolError(format!(
+            return Err(NativeclickError::DeserializeError(format!(
                 "string too large: {len} > {MAX_STRING_SIZE}"
             )));
         }

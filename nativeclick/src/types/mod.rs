@@ -348,97 +348,150 @@ impl Type {
     }
 }
 
+/// Reads `rows` cumulative UInt64 end offsets (arrays, maps, size-stream strings) in one piece,
+/// checking they never go back and stay within `MAX_STRING_SIZE` items.
+pub(crate) async fn read_offsets<R: ClickhouseRead>(
+    reader: &mut R,
+    rows: usize,
+) -> Result<Vec<u64>> {
+    if rows > MAX_STRING_SIZE {
+        return Err(NativeclickError::DeserializeError(format!(
+            "too many rows: {rows}"
+        )));
+    }
+    let mut bytes = vec![0u8; rows * 8];
+    reader.read_exact(&mut bytes).await?;
+    let offsets: Vec<u64> = bytes
+        .as_chunks::<8>()
+        .0
+        .iter()
+        .map(|x| u64::from_le_bytes(*x))
+        .collect();
+    let mut last = 0;
+    for offset in &offsets {
+        if *offset < last || *offset > MAX_STRING_SIZE as u64 {
+            return Err(NativeclickError::DeserializeError(format!(
+                "malformed offsets: {offset} after {last}"
+            )));
+        }
+        last = *offset;
+    }
+    Ok(offsets)
+}
+
+/// How a type is laid out on the wire: types sharing a layout share a codec.
+enum Codec<'a> {
+    /// One fixed-width value per row.
+    Sized,
+    String,
+    Array,
+    Tuple,
+    Point,
+    Ring,
+    Polygon,
+    MultiPolygon,
+    Nullable,
+    Map,
+    LowCardinality,
+    /// One placeholder byte per row.
+    Nothing,
+    Variant,
+    Dynamic,
+    Json,
+    /// Same layout as another type.
+    Alias(&'a Type),
+}
+
 impl Type {
+    fn codec(&self) -> Codec<'_> {
+        match self {
+            Type::Int8
+            | Type::Int16
+            | Type::Int32
+            | Type::Int64
+            | Type::Int128
+            | Type::Int256
+            | Type::UInt8
+            | Type::UInt16
+            | Type::UInt32
+            | Type::UInt64
+            | Type::UInt128
+            | Type::UInt256
+            | Type::Float32
+            | Type::Float64
+            | Type::BFloat16
+            | Type::Decimal32(_)
+            | Type::Decimal64(_)
+            | Type::Decimal128(_)
+            | Type::Decimal256(_)
+            | Type::Uuid
+            | Type::Date
+            | Type::Date32
+            | Type::DateTime(_)
+            | Type::DateTime64(_, _)
+            | Type::Time
+            | Type::Time64(_)
+            | Type::Bool
+            | Type::Ipv4
+            | Type::Ipv6
+            | Type::Enum8(_)
+            | Type::Enum16(_) => Codec::Sized,
+            Type::String | Type::FixedString(_) => Codec::String,
+            Type::Array(_) => Codec::Array,
+            Type::Tuple(_) | Type::NamedTuple(_) => Codec::Tuple,
+            Type::Point => Codec::Point,
+            Type::Ring => Codec::Ring,
+            Type::Polygon => Codec::Polygon,
+            Type::MultiPolygon => Codec::MultiPolygon,
+            Type::Nullable(_) => Codec::Nullable,
+            Type::Map(_, _) => Codec::Map,
+            Type::LowCardinality(_) => Codec::LowCardinality,
+            Type::Nothing => Codec::Nothing,
+            Type::Variant(_) | Type::Geometry => Codec::Variant,
+            Type::Dynamic(_) => Codec::Dynamic,
+            Type::Json(_) => Codec::Json,
+            Type::LineString
+            | Type::MultiPoint
+            | Type::MultiLineString
+            | Type::Interval(_)
+            | Type::SimpleAggregateFunction(_, _) => Codec::Alias(self.storage().unwrap()),
+        }
+    }
+
     pub(crate) fn deserialize_prefix<'a, R: ClickhouseRead>(
         &'a self,
         reader: &'a mut R,
         state: &'a mut DeserializerState,
     ) -> impl Future<Output = Result<()>> + Send + 'a {
         use deserialize::*;
-
         async move {
-            match self {
-                Type::Int8
-                | Type::Int16
-                | Type::Int32
-                | Type::Int64
-                | Type::Int128
-                | Type::Int256
-                | Type::UInt8
-                | Type::UInt16
-                | Type::UInt32
-                | Type::UInt64
-                | Type::UInt128
-                | Type::UInt256
-                | Type::Float32
-                | Type::Float64
-                | Type::BFloat16
-                | Type::Decimal32(_)
-                | Type::Decimal64(_)
-                | Type::Decimal128(_)
-                | Type::Decimal256(_)
-                | Type::Uuid
-                | Type::Date
-                | Type::DateTime(_)
-                | Type::DateTime64(_, _)
-                | Type::Ipv4
-                | Type::Ipv6
-                | Type::Enum8(_)
-                | Type::Enum16(_)
-                | Type::Bool
-                | Type::Date32
-                | Type::Time
-                | Type::Time64(_) => {
-                    sized::SizedDeserializer::read_prefix(self, reader, state).await?
+            match self.codec() {
+                Codec::Sized | Codec::String | Codec::Nothing => Ok(()),
+                Codec::Array => array::ArrayDeserializer::read_prefix(self, reader, state).await,
+                Codec::Tuple => tuple::TupleDeserializer::read_prefix(self, reader, state).await,
+                Codec::Point => geo::PointDeserializer::read_prefix(self, reader, state).await,
+                Codec::Ring => geo::RingDeserializer::read_prefix(self, reader, state).await,
+                Codec::Polygon => geo::PolygonDeserializer::read_prefix(self, reader, state).await,
+                Codec::MultiPolygon => {
+                    geo::MultiPolygonDeserializer::read_prefix(self, reader, state).await
                 }
-
-                Type::String | Type::FixedString(_) => {
-                    string::StringDeserializer::read_prefix(self, reader, state).await?
+                Codec::Nullable => {
+                    nullable::NullableDeserializer::read_prefix(self, reader, state).await
                 }
-
-                Type::Array(_) => {
-                    array::ArrayDeserializer::read_prefix(self, reader, state).await?
-                }
-                Type::Tuple(_) => {
-                    tuple::TupleDeserializer::read_prefix(self, reader, state).await?
-                }
-                Type::Point => geo::PointDeserializer::read_prefix(self, reader, state).await?,
-                Type::Ring => geo::RingDeserializer::read_prefix(self, reader, state).await?,
-                Type::Polygon => geo::PolygonDeserializer::read_prefix(self, reader, state).await?,
-                Type::MultiPolygon => {
-                    geo::MultiPolygonDeserializer::read_prefix(self, reader, state).await?
-                }
-                Type::Nullable(_) => {
-                    nullable::NullableDeserializer::read_prefix(self, reader, state).await?
-                }
-                Type::Map(_, _) => map::MapDeserializer::read_prefix(self, reader, state).await?,
-                Type::LowCardinality(_) => {
+                Codec::Map => map::MapDeserializer::read_prefix(self, reader, state).await,
+                Codec::LowCardinality => {
                     low_cardinality::LowCardinalityDeserializer::read_prefix(self, reader, state)
-                        .await?
+                        .await
                 }
-                Type::NamedTuple(_) => {
-                    tuple::TupleDeserializer::read_prefix(self, reader, state).await?
+                Codec::Variant => {
+                    variant::VariantDeserializer::read_prefix(self, reader, state).await
                 }
-                Type::Nothing => {}
-                Type::Variant(_) | Type::Geometry => {
-                    variant::VariantDeserializer::read_prefix(self, reader, state).await?
+                Codec::Dynamic => {
+                    dynamic::DynamicDeserializer::read_prefix(self, reader, state).await
                 }
-                Type::Dynamic(_) => {
-                    dynamic::DynamicDeserializer::read_prefix(self, reader, state).await?
-                }
-                Type::Json(_) => json::JsonDeserializer::read_prefix(self, reader, state).await?,
-                Type::LineString
-                | Type::MultiPoint
-                | Type::MultiLineString
-                | Type::Interval(_)
-                | Type::SimpleAggregateFunction(_, _) => {
-                    self.storage()
-                        .unwrap()
-                        .deserialize_prefix(reader, state)
-                        .await?
-                }
+                Codec::Json => json::JsonDeserializer::read_prefix(self, reader, state).await,
+                Codec::Alias(storage) => storage.deserialize_prefix(reader, state).await,
             }
-            Ok(())
         }
         .boxed()
     }
@@ -450,96 +503,45 @@ impl Type {
         state: &'a mut DeserializerState,
     ) -> impl Future<Output = Result<Vec<Value>>> + Send + 'a {
         use deserialize::*;
-
         async move {
             if rows > MAX_STRING_SIZE {
-                return Err(NativeclickError::ProtocolError(format!(
+                return Err(NativeclickError::DeserializeError(format!(
                     "deserialize response size too large. {rows} > {MAX_STRING_SIZE}"
                 )));
             }
-
-            Ok(match self {
-                Type::Int8
-                | Type::Int16
-                | Type::Int32
-                | Type::Int64
-                | Type::Int128
-                | Type::Int256
-                | Type::UInt8
-                | Type::UInt16
-                | Type::UInt32
-                | Type::UInt64
-                | Type::UInt128
-                | Type::UInt256
-                | Type::Float32
-                | Type::Float64
-                | Type::BFloat16
-                | Type::Decimal32(_)
-                | Type::Decimal64(_)
-                | Type::Decimal128(_)
-                | Type::Decimal256(_)
-                | Type::Uuid
-                | Type::Date
-                | Type::DateTime(_)
-                | Type::DateTime64(_, _)
-                | Type::Ipv4
-                | Type::Ipv6
-                | Type::Enum8(_)
-                | Type::Enum16(_)
-                | Type::Bool
-                | Type::Date32
-                | Type::Time
-                | Type::Time64(_) => {
-                    sized::SizedDeserializer::read(self, reader, rows, state).await?
+            match self.codec() {
+                Codec::Sized => sized::SizedDeserializer::read(self, reader, rows, state).await,
+                Codec::String => string::StringDeserializer::read(self, reader, rows, state).await,
+                Codec::Array => array::ArrayDeserializer::read(self, reader, rows, state).await,
+                Codec::Tuple => tuple::TupleDeserializer::read(self, reader, rows, state).await,
+                Codec::Point => geo::PointDeserializer::read(self, reader, rows, state).await,
+                Codec::Ring => geo::RingDeserializer::read(self, reader, rows, state).await,
+                Codec::Polygon => geo::PolygonDeserializer::read(self, reader, rows, state).await,
+                Codec::MultiPolygon => {
+                    geo::MultiPolygonDeserializer::read(self, reader, rows, state).await
                 }
-
-                Type::String | Type::FixedString(_) => {
-                    string::StringDeserializer::read(self, reader, rows, state).await?
+                Codec::Nullable => {
+                    nullable::NullableDeserializer::read(self, reader, rows, state).await
                 }
-
-                Type::Array(_) => array::ArrayDeserializer::read(self, reader, rows, state).await?,
-                Type::Ring => geo::RingDeserializer::read(self, reader, rows, state).await?,
-                Type::Polygon => geo::PolygonDeserializer::read(self, reader, rows, state).await?,
-                Type::MultiPolygon => {
-                    geo::MultiPolygonDeserializer::read(self, reader, rows, state).await?
-                }
-                Type::Tuple(_) => tuple::TupleDeserializer::read(self, reader, rows, state).await?,
-                Type::Point => geo::PointDeserializer::read(self, reader, rows, state).await?,
-                Type::Nullable(_) => {
-                    nullable::NullableDeserializer::read(self, reader, rows, state).await?
-                }
-                Type::Map(_, _) => map::MapDeserializer::read(self, reader, rows, state).await?,
-                Type::LowCardinality(_) => {
+                Codec::Map => map::MapDeserializer::read(self, reader, rows, state).await,
+                Codec::LowCardinality => {
                     low_cardinality::LowCardinalityDeserializer::read(self, reader, rows, state)
-                        .await?
+                        .await
                 }
-                Type::NamedTuple(_) => {
-                    tuple::TupleDeserializer::read(self, reader, rows, state).await?
-                }
-                Type::Nothing => {
-                    // One placeholder byte per row.
+                Codec::Nothing => {
                     let mut skip = vec![0u8; rows];
                     reader.read_exact(&mut skip).await?;
-                    vec![Value::Null; rows]
+                    Ok(vec![Value::Null; rows])
                 }
-                Type::Variant(_) | Type::Geometry => {
-                    variant::VariantDeserializer::read(self, reader, rows, state).await?
+                Codec::Variant => {
+                    variant::VariantDeserializer::read(self, reader, rows, state).await
                 }
-                Type::Dynamic(_) => {
-                    dynamic::DynamicDeserializer::read(self, reader, rows, state).await?
+                Codec::Dynamic => {
+                    dynamic::DynamicDeserializer::read(self, reader, rows, state).await
                 }
-                Type::Json(_) => json::JsonDeserializer::read(self, reader, rows, state).await?,
-                Type::LineString
-                | Type::MultiPoint
-                | Type::MultiLineString
-                | Type::Interval(_)
-                | Type::SimpleAggregateFunction(_, _) => {
-                    self.storage()
-                        .unwrap()
-                        .deserialize_column(reader, rows, state)
-                        .await?
-                }
-            })
+                Codec::Json => json::JsonDeserializer::read(self, reader, rows, state).await,
+                Codec::Alias(storage) => storage.deserialize_column(reader, rows, state).await,
+            }
         }
         .boxed()
     }
@@ -551,90 +553,36 @@ impl Type {
         state: &'a mut SerializerState,
     ) -> impl Future<Output = Result<()>> + Send + 'a {
         use serialize::*;
-
         async move {
-            match self {
-                Type::Int8
-                | Type::Int16
-                | Type::Int32
-                | Type::Int64
-                | Type::Int128
-                | Type::Int256
-                | Type::UInt8
-                | Type::UInt16
-                | Type::UInt32
-                | Type::UInt64
-                | Type::UInt128
-                | Type::UInt256
-                | Type::Float32
-                | Type::Float64
-                | Type::BFloat16
-                | Type::Decimal32(_)
-                | Type::Decimal64(_)
-                | Type::Decimal128(_)
-                | Type::Decimal256(_)
-                | Type::Uuid
-                | Type::Date
-                | Type::DateTime(_)
-                | Type::DateTime64(_, _)
-                | Type::Ipv4
-                | Type::Ipv6
-                | Type::Enum8(_)
-                | Type::Enum16(_)
-                | Type::Bool
-                | Type::Date32
-                | Type::Time
-                | Type::Time64(_) => {
-                    sized::SizedSerializer::write(self, values, writer, state).await?
+            match self.codec() {
+                Codec::Sized => sized::SizedSerializer::write(self, values, writer, state).await,
+                Codec::String => string::StringSerializer::write(self, values, writer, state).await,
+                Codec::Array => array::ArraySerializer::write(self, values, writer, state).await,
+                Codec::Tuple => tuple::TupleSerializer::write(self, values, writer, state).await,
+                Codec::Point => geo::PointSerializer::write(self, values, writer, state).await,
+                Codec::Ring => geo::RingSerializer::write(self, values, writer, state).await,
+                Codec::Polygon => geo::PolygonSerializer::write(self, values, writer, state).await,
+                Codec::MultiPolygon => {
+                    geo::MultiPolygonSerializer::write(self, values, writer, state).await
                 }
-
-                Type::String | Type::FixedString(_) => {
-                    string::StringSerializer::write(self, values, writer, state).await?
+                Codec::Nullable => {
+                    nullable::NullableSerializer::write(self, values, writer, state).await
                 }
-
-                Type::Array(_) => {
-                    array::ArraySerializer::write(self, values, writer, state).await?
-                }
-                Type::Tuple(_) => {
-                    tuple::TupleSerializer::write(self, values, writer, state).await?
-                }
-                Type::Point => geo::PointSerializer::write(self, values, writer, state).await?,
-                Type::Ring => geo::RingSerializer::write(self, values, writer, state).await?,
-                Type::Polygon => geo::PolygonSerializer::write(self, values, writer, state).await?,
-                Type::MultiPolygon => {
-                    geo::MultiPolygonSerializer::write(self, values, writer, state).await?
-                }
-                Type::Nullable(_) => {
-                    nullable::NullableSerializer::write(self, values, writer, state).await?
-                }
-                Type::Map(_, _) => map::MapSerializer::write(self, values, writer, state).await?,
-                Type::LowCardinality(_) => {
+                Codec::Map => map::MapSerializer::write(self, values, writer, state).await,
+                Codec::LowCardinality => {
                     low_cardinality::LowCardinalitySerializer::write(self, values, writer, state)
-                        .await?
+                        .await
                 }
-                Type::NamedTuple(_) => {
-                    tuple::TupleSerializer::write(self, values, writer, state).await?
+                Codec::Nothing => Ok(writer.write_all(&vec![b'0'; values.len()]).await?),
+                Codec::Variant => {
+                    variant::VariantSerializer::write(self, values, writer, state).await
                 }
-                Type::Nothing => writer.write_all(&vec![b'0'; values.len()]).await?,
-                Type::Variant(_) | Type::Geometry => {
-                    variant::VariantSerializer::write(self, values, writer, state).await?
+                Codec::Dynamic => {
+                    dynamic::DynamicSerializer::write(self, values, writer, state).await
                 }
-                Type::Dynamic(_) => {
-                    dynamic::DynamicSerializer::write(self, values, writer, state).await?
-                }
-                Type::Json(_) => json::JsonSerializer::write(self, values, writer, state).await?,
-                Type::LineString
-                | Type::MultiPoint
-                | Type::MultiLineString
-                | Type::Interval(_)
-                | Type::SimpleAggregateFunction(_, _) => {
-                    self.storage()
-                        .unwrap()
-                        .serialize_column(values, writer, state)
-                        .await?
-                }
+                Codec::Json => json::JsonSerializer::write(self, values, writer, state).await,
+                Codec::Alias(storage) => storage.serialize_column(values, writer, state).await,
             }
-            Ok(())
         }
         .boxed()
     }
@@ -648,102 +596,46 @@ impl Type {
         state: &'a mut SerializerState,
     ) -> impl Future<Output = Result<()>> + Send + 'a {
         use serialize::*;
-
         async move {
-            match self {
-                Type::Int8
-                | Type::Int16
-                | Type::Int32
-                | Type::Int64
-                | Type::Int128
-                | Type::Int256
-                | Type::UInt8
-                | Type::UInt16
-                | Type::UInt32
-                | Type::UInt64
-                | Type::UInt128
-                | Type::UInt256
-                | Type::Float32
-                | Type::Float64
-                | Type::BFloat16
-                | Type::Decimal32(_)
-                | Type::Decimal64(_)
-                | Type::Decimal128(_)
-                | Type::Decimal256(_)
-                | Type::Uuid
-                | Type::Date
-                | Type::DateTime(_)
-                | Type::DateTime64(_, _)
-                | Type::Ipv4
-                | Type::Ipv6
-                | Type::Enum8(_)
-                | Type::Enum16(_)
-                | Type::Bool
-                | Type::Date32
-                | Type::Time
-                | Type::Time64(_) => {
-                    sized::SizedSerializer::write_prefix(self, values, writer, state).await?
+            match self.codec() {
+                Codec::Sized | Codec::String | Codec::Nothing => Ok(()),
+                Codec::Array => {
+                    array::ArraySerializer::write_prefix(self, values, writer, state).await
                 }
-
-                Type::String | Type::FixedString(_) => {
-                    string::StringSerializer::write_prefix(self, values, writer, state).await?
+                Codec::Tuple => {
+                    tuple::TupleSerializer::write_prefix(self, values, writer, state).await
                 }
-
-                Type::Array(_) => {
-                    array::ArraySerializer::write_prefix(self, values, writer, state).await?
+                Codec::Point => {
+                    geo::PointSerializer::write_prefix(self, values, writer, state).await
                 }
-                Type::Tuple(_) => {
-                    tuple::TupleSerializer::write_prefix(self, values, writer, state).await?
+                Codec::Ring => geo::RingSerializer::write_prefix(self, values, writer, state).await,
+                Codec::Polygon => {
+                    geo::PolygonSerializer::write_prefix(self, values, writer, state).await
                 }
-                Type::Point => {
-                    geo::PointSerializer::write_prefix(self, values, writer, state).await?
+                Codec::MultiPolygon => {
+                    geo::MultiPolygonSerializer::write_prefix(self, values, writer, state).await
                 }
-                Type::Ring => {
-                    geo::RingSerializer::write_prefix(self, values, writer, state).await?
+                Codec::Nullable => {
+                    nullable::NullableSerializer::write_prefix(self, values, writer, state).await
                 }
-                Type::Polygon => {
-                    geo::PolygonSerializer::write_prefix(self, values, writer, state).await?
-                }
-                Type::MultiPolygon => {
-                    geo::MultiPolygonSerializer::write_prefix(self, values, writer, state).await?
-                }
-                Type::Nullable(_) => {
-                    nullable::NullableSerializer::write_prefix(self, values, writer, state).await?
-                }
-                Type::Map(_, _) => {
-                    map::MapSerializer::write_prefix(self, values, writer, state).await?
-                }
-                Type::LowCardinality(_) => {
+                Codec::Map => map::MapSerializer::write_prefix(self, values, writer, state).await,
+                Codec::LowCardinality => {
                     low_cardinality::LowCardinalitySerializer::write_prefix(
                         self, values, writer, state,
                     )
-                    .await?
+                    .await
                 }
-                Type::NamedTuple(_) => {
-                    tuple::TupleSerializer::write_prefix(self, values, writer, state).await?
+                Codec::Variant => {
+                    variant::VariantSerializer::write_prefix(self, values, writer, state).await
                 }
-                Type::Nothing => {}
-                Type::Variant(_) | Type::Geometry => {
-                    variant::VariantSerializer::write_prefix(self, values, writer, state).await?
+                Codec::Dynamic => {
+                    dynamic::DynamicSerializer::write_prefix(self, values, writer, state).await
                 }
-                Type::Dynamic(_) => {
-                    dynamic::DynamicSerializer::write_prefix(self, values, writer, state).await?
+                Codec::Json => {
+                    json::JsonSerializer::write_prefix(self, values, writer, state).await
                 }
-                Type::Json(_) => {
-                    json::JsonSerializer::write_prefix(self, values, writer, state).await?
-                }
-                Type::LineString
-                | Type::MultiPoint
-                | Type::MultiLineString
-                | Type::Interval(_)
-                | Type::SimpleAggregateFunction(_, _) => {
-                    self.storage()
-                        .unwrap()
-                        .serialize_prefix(values, writer, state)
-                        .await?
-                }
+                Codec::Alias(storage) => storage.serialize_prefix(values, writer, state).await,
             }
-            Ok(())
         }
         .boxed()
     }
@@ -797,7 +689,6 @@ impl Type {
             Type::Array(inner) => {
                 inner.validate()?;
             }
-            // Type::Nested(_) => return Err(anyhow!("nested not implemented")),
             Type::Tuple(inner) | Type::Variant(inner) => {
                 for inner in inner {
                     inner.validate()?;
@@ -862,8 +753,8 @@ impl Type {
         Ok(())
     }
 
-    pub(crate) fn validate_value(&self, value: &Value) -> Result<()> {
-        self.validate()?;
+    /// Checks that `value` fits this type, the type itself being already validated.
+    pub(crate) fn check_value(&self, value: &Value) -> Result<()> {
         if !self.inner_validate_value(value) {
             return Err(NativeclickError::TypeParseError(format!(
                 "could not assign value '{value:?}' to type '{self:?}'"

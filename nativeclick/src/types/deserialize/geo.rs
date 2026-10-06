@@ -47,28 +47,26 @@ impl Deserializer for PointDeserializer {
     }
 }
 macro_rules! array_deser {
-    ($name:ident, $item:ty) => {
-        paste::paste! {
-            pub struct [<$name Deserializer>];
-            impl super::array::ArrayDeserializerGeneric for [<$name Deserializer>] {
-                type Item = crate::values::$item;
-                fn inner_type(_type_: &Type) -> &Type {
-                    &Type::$item
-                }
-                fn inner_value(items: Vec<Self::Item>) -> Value {
-                    Value::$name(values::$name(items))
-                }
-                fn item_mapping(value: Value) -> Self::Item {
-                    let Value::$item(point) = value else {
-                        unreachable!()
-                    };
-                    point
-                }
+    ($deserializer:ident, $name:ident, $item:ident) => {
+        pub struct $deserializer;
+        impl super::array::ArrayDeserializerGeneric for $deserializer {
+            type Item = crate::values::$item;
+            fn inner_type(_type_: &Type) -> &Type {
+                &Type::$item
+            }
+            fn inner_value(items: Vec<Self::Item>) -> Value {
+                Value::$name(values::$name(items))
+            }
+            fn item_mapping(value: Value) -> Self::Item {
+                let Value::$item(point) = value else {
+                    unreachable!()
+                };
+                point
             }
         }
     };
 }
 
-array_deser!(Ring, Point);
-array_deser!(Polygon, Ring);
-array_deser!(MultiPolygon, Polygon);
+array_deser!(RingDeserializer, Ring, Point);
+array_deser!(PolygonDeserializer, Polygon, Ring);
+array_deser!(MultiPolygonDeserializer, MultiPolygon, Polygon);

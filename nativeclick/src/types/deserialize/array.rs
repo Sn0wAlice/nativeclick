@@ -1,5 +1,3 @@
-use tokio::io::AsyncReadExt;
-
 use crate::{Result, io::ClickhouseRead, values::Value};
 
 use super::{Deserializer, DeserializerState, Type};
@@ -50,10 +48,7 @@ impl<T: ArrayDeserializerGeneric + 'static> Deserializer for T {
         if rows == 0 {
             return Ok(vec![]);
         }
-        let mut offsets = vec![];
-        for _ in 0..rows {
-            offsets.push(reader.read_u64_le().await?);
-        }
+        let offsets = super::super::read_offsets(reader, rows).await?;
         let mut items = Self::inner_type(type_)
             .deserialize_column(reader, offsets[offsets.len() - 1] as usize, state)
             .await?

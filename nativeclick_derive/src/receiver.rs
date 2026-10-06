@@ -84,7 +84,7 @@ impl ReplaceReceiver<'_> {
             self.visit_type_mut_impl(ty);
             return;
         };
-        *ty = self.self_ty(span).into();
+        *ty = Type::Path(self.self_ty(span));
     }
 
     // `Self::Assoc` -> `<Receiver>::Assoc`
@@ -111,7 +111,7 @@ impl ReplaceReceiver<'_> {
                 self.visit_type_mut(&mut ty.elem);
                 self.visit_expr_mut(&mut ty.len);
             }
-            Type::BareFn(ty) => {
+            Type::FnPtr(ty) => {
                 for arg in &mut ty.inputs {
                     self.visit_type_mut(&mut arg.ty);
                 }
@@ -183,13 +183,13 @@ impl ReplaceReceiver<'_> {
                         | GenericArgument::Constraint(_)
                         | GenericArgument::AssocConst(_)
                         | GenericArgument::Const(_) => {}
-                        _ => todo!(),
+                        _ => {}
                     }
                 }
             }
             PathArguments::Parenthesized(arguments) => {
                 for argument in &mut arguments.inputs {
-                    self.visit_type_mut(argument);
+                    self.visit_type_mut(&mut argument.ty);
                 }
                 self.visit_return_type_mut(&mut arguments.output);
             }
@@ -207,8 +207,8 @@ impl ReplaceReceiver<'_> {
         match bound {
             TypeParamBound::Trait(bound) => self.visit_path_mut(&mut bound.path),
             TypeParamBound::Lifetime(_) => {}
-            TypeParamBound::Verbatim(_) => todo!(),
-            _ => todo!(),
+            // Nothing to visit in other (verbatim or future) bounds.
+            _ => {}
         }
     }
 
@@ -233,7 +233,7 @@ impl ReplaceReceiver<'_> {
                         }
                     }
                     WherePredicate::Lifetime(_) => {}
-                    _ => todo!(),
+                    _ => {}
                 }
             }
         }

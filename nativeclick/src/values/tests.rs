@@ -17,7 +17,6 @@ use super::Value;
 
 fn roundtrip<T: FromSql + ToSql>(item: T, type_: &Type) -> T {
     let serialized = Value::from_value(item).expect("failed to serialize");
-    // println!("{:?}", serialized);
     serialized.to_value(type_).expect("failed to deserialize")
 }
 

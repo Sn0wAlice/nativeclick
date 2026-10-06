@@ -21,7 +21,7 @@ use tokio_stream::wrappers::ReceiverStream;
 use uuid::Uuid;
 
 use crate::{
-    NativeclickError, ParsedQuery, RawRow, Result, Type,
+    NativeclickError, ParsedQuery, RawRow, Result, Type, Value,
     block::{Block, BlockInfo},
     convert::Row,
     internal_client_in::InternalClientIn,
@@ -421,9 +421,7 @@ impl<R: ClickhouseRead + 'static, W: ClickhouseWrite> InnerClient<R, W> {
                 },
                 packet = packets.recv() => match packet {
                     Some(packet) => self.receive_packet(packet?).await?,
-                    None => break Err(NativeclickError::ProtocolError(
-                        "connection reader stopped".to_string(),
-                    )),
+                    None => break Err(NativeclickError::ConnectionClosed),
                 },
             }
         };
@@ -722,9 +720,11 @@ impl Client {
         let server = match server.await {
             Ok(server) => server?,
             Err(_) => {
-                return Err(closed.lock().unwrap().clone().unwrap_or_else(|| {
-                    NativeclickError::ProtocolError("connection closed during handshake".into())
-                }));
+                return Err(closed
+                    .lock()
+                    .unwrap()
+                    .clone()
+                    .unwrap_or(NativeclickError::ConnectionClosed));
             }
         };
         let client = Client {
@@ -746,7 +746,7 @@ impl Client {
             .lock()
             .unwrap()
             .clone()
-            .unwrap_or_else(|| NativeclickError::ProtocolError("connection closed".to_string()))
+            .unwrap_or(NativeclickError::ConnectionClosed)
     }
 
     /// A handle on the same connection whose queries use `options` (settings, parameters,
@@ -1044,24 +1044,47 @@ async fn drain_error(receiver: &mut mpsc::Receiver<Result<Block>>) -> Option<Nat
 
 /// Serializes `rows` into one block for columns `column_types`, failing on the first bad row.
 fn rows_to_block<T: Row>(rows: Vec<T>, column_types: &IndexMap<String, Type>) -> Result<Block> {
-    let mut block = Block {
-        info: BlockInfo::default(),
-        rows: rows.len() as u64,
-        column_types: column_types.clone(),
-        column_data: IndexMap::new(),
-    };
+    for type_ in column_types.values() {
+        type_.validate()?;
+    }
+    let mut columns: Vec<Vec<Value>> = column_types
+        .keys()
+        .map(|_| Vec::with_capacity(rows.len()))
+        .collect();
+    // Column of each field position, learnt from the first rows: rows of one type list their
+    // fields in the same order, so names are compared instead of hashed for every cell.
+    let mut slots: Vec<usize> = vec![];
+    let row_count = rows.len();
     for row in rows {
-        for (key, value) in row.serialize_row(column_types)? {
-            let type_ = column_types.get(&*key).ok_or_else(|| {
-                NativeclickError::ProtocolError(format!("missing type for data, column: {key}"))
-            })?;
-            type_.validate_value(&value)?;
-            if let Some(column) = block.column_data.get_mut(&*key) {
-                column.push(value);
-            } else {
-                block.column_data.insert(key.into_owned(), vec![value]);
-            }
+        for (position, (key, value)) in row.serialize_row(column_types)?.into_iter().enumerate() {
+            let slot = match slots.get(position) {
+                Some(slot) if column_types.get_index(*slot).is_some_and(|x| *x.0 == *key) => *slot,
+                _ => {
+                    let slot = column_types.get_index_of(&*key).ok_or_else(|| {
+                        NativeclickError::SerializeError(format!("no column {key} in the table"))
+                    })?;
+                    if position < slots.len() {
+                        slots[position] = slot;
+                    } else {
+                        slots.push(slot);
+                    }
+                    slot
+                }
+            };
+            column_types[slot].check_value(&value)?;
+            columns[slot].push(value);
         }
     }
-    Ok(block)
+    let column_data = column_types
+        .keys()
+        .zip(columns)
+        .filter(|(_, values)| !values.is_empty())
+        .map(|(name, values)| (name.clone(), values))
+        .collect();
+    Ok(Block {
+        info: BlockInfo::default(),
+        rows: row_count as u64,
+        column_types: column_types.clone(),
+        column_data,
+    })
 }

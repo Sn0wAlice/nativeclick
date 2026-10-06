@@ -4,6 +4,8 @@ use thiserror::Error;
 
 use crate::Type;
 
+/// Every error of this crate. Errors are `Clone`: one connection error is handed to every caller
+/// waiting on that connection.
 #[derive(Error, Debug)]
 #[non_exhaustive]
 pub enum NativeclickError {
@@ -17,8 +19,19 @@ pub enum NativeclickError {
     MissingField(&'static str),
     #[error("duplicate field {0} in struct")]
     DuplicateField(&'static str),
+    /// The server sent something this client cannot make sense of.
     #[error("protocol error: {0}")]
     ProtocolError(String),
+    /// The connection is closed; later calls on the same [`crate::Client`] return the error that
+    /// closed it when it is known.
+    #[error("connection closed")]
+    ConnectionClosed,
+    /// A compressed frame is corrupt, too large or uses an unknown codec.
+    #[error("compression error: {0}")]
+    Compression(String),
+    /// The server does not support a requested feature (too old protocol revision).
+    #[error("unsupported: {0}")]
+    Unsupported(String),
     #[error("type parse error: {0}")]
     TypeParseError(String),
     #[error("deserialize error: {0}")]
@@ -79,6 +92,9 @@ impl Clone for NativeclickError {
             Self::MissingField(arg0) => Self::MissingField(arg0),
             Self::DuplicateField(arg0) => Self::DuplicateField(arg0),
             Self::ProtocolError(arg0) => Self::ProtocolError(arg0.clone()),
+            Self::ConnectionClosed => Self::ConnectionClosed,
+            Self::Compression(arg0) => Self::Compression(arg0.clone()),
+            Self::Unsupported(arg0) => Self::Unsupported(arg0.clone()),
             Self::TypeParseError(arg0) => Self::TypeParseError(arg0.clone()),
             Self::DeserializeError(arg0) => Self::DeserializeError(arg0.clone()),
             Self::SerializeError(arg0) => Self::SerializeError(arg0.clone()),

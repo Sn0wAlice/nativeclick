@@ -1,8 +1,6 @@
 use tokio::io::AsyncReadExt;
 
-use crate::{
-    NativeclickError, Result, io::ClickhouseRead, protocol::MAX_STRING_SIZE, values::Value,
-};
+use crate::{NativeclickError, Result, io::ClickhouseRead, values::Value};
 
 use super::{Deserializer, DeserializerState, Type};
 
@@ -44,25 +42,16 @@ impl Deserializer for StringDeserializer {
 
 /// Revision 54492+: `rows` cumulative end offsets (UInt64), then all the bytes.
 async fn read_size_stream<R: ClickhouseRead>(reader: &mut R, rows: usize) -> Result<Vec<Value>> {
-    let mut ends = Vec::with_capacity(rows.min(1 << 16));
-    let mut last = 0u64;
-    for _ in 0..rows {
-        let end = reader.read_u64_le().await?;
-        if end < last || end > MAX_STRING_SIZE as u64 {
-            return Err(NativeclickError::DeserializeError(format!(
-                "malformed string offsets: {end} after {last}"
-            )));
-        }
-        ends.push(end as usize);
-        last = end;
-    }
-    let mut bytes = vec![0u8; last as usize];
+    let ends = super::super::read_offsets(reader, rows).await?;
+    let mut bytes = vec![0u8; ends.last().copied().unwrap_or(0) as usize];
     reader.read_exact(&mut bytes).await?;
-    let mut out = Vec::with_capacity(rows);
     let mut start = 0;
-    for end in ends {
-        out.push(Value::String(bytes[start..end].to_vec()));
-        start = end;
-    }
-    Ok(out)
+    Ok(ends
+        .into_iter()
+        .map(|end| {
+            let value = Value::String(bytes[start..end as usize].to_vec());
+            start = end as usize;
+            value
+        })
+        .collect())
 }

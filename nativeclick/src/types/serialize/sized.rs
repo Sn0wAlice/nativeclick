@@ -11,6 +11,53 @@ fn swap_endian_256(mut input: [u8; 32]) -> [u8; 32] {
     input
 }
 
+/// Appends the little-endian bytes of one value.
+fn encode(type_: &Type, value: &Value, out: &mut Vec<u8>) -> Result<()> {
+    match value.justify_null_ref(type_).as_ref() {
+        Value::Int8(x) => out.push(*x as u8),
+        Value::Int16(x) => out.extend_from_slice(&x.to_le_bytes()),
+        Value::Int32(x) => out.extend_from_slice(&x.to_le_bytes()),
+        Value::Int64(x) => out.extend_from_slice(&x.to_le_bytes()),
+        Value::Int128(x) => out.extend_from_slice(&x.to_le_bytes()),
+        Value::Int256(x) => out.extend_from_slice(&swap_endian_256(x.0)),
+        Value::UInt8(x) => out.push(*x),
+        Value::UInt16(x) => out.extend_from_slice(&x.to_le_bytes()),
+        Value::UInt32(x) => out.extend_from_slice(&x.to_le_bytes()),
+        Value::UInt64(x) => out.extend_from_slice(&x.to_le_bytes()),
+        Value::UInt128(x) => out.extend_from_slice(&x.to_le_bytes()),
+        Value::UInt256(x) => out.extend_from_slice(&swap_endian_256(x.0)),
+        Value::Float32(x) => out.extend_from_slice(&x.to_bits().to_le_bytes()),
+        Value::Float64(x) => out.extend_from_slice(&x.to_bits().to_le_bytes()),
+        Value::BFloat16(x) => out.extend_from_slice(&serialize_bf16_to_bits(x).to_le_bytes()),
+        Value::Decimal32(_, x) => out.extend_from_slice(&x.to_le_bytes()),
+        Value::Decimal64(_, x) => out.extend_from_slice(&x.to_le_bytes()),
+        Value::Decimal128(_, x) => out.extend_from_slice(&x.to_le_bytes()),
+        Value::Decimal256(_, x) => out.extend_from_slice(&swap_endian_256(x.0)),
+        Value::Uuid(x) => {
+            let n = x.as_u128();
+            out.extend_from_slice(&((n >> 64) as u64).to_le_bytes());
+            out.extend_from_slice(&(n as u64).to_le_bytes());
+        }
+        Value::Date(x) => out.extend_from_slice(&x.0.to_le_bytes()),
+        Value::DateTime(x) => out.extend_from_slice(&x.1.to_le_bytes()),
+        Value::DateTime64(x) => out.extend_from_slice(&x.1.to_le_bytes()),
+        Value::Ipv4(x) => out.extend_from_slice(&u32::from(x.0).to_le_bytes()),
+        Value::Ipv6(x) => out.extend_from_slice(&x.octets()),
+        Value::Enum8(x) => out.push(*x as u8),
+        Value::Enum16(x) => out.extend_from_slice(&x.to_le_bytes()),
+        Value::Bool(x) => out.push(*x as u8),
+        Value::Date32(x) => out.extend_from_slice(&x.0.to_le_bytes()),
+        Value::Time(x) => out.extend_from_slice(&x.to_le_bytes()),
+        Value::Time64(_, x) => out.extend_from_slice(&x.to_le_bytes()),
+        x => {
+            return Err(crate::NativeclickError::SerializeError(format!(
+                "cannot write {x:?} as {type_}"
+            )));
+        }
+    }
+    Ok(())
+}
+
 impl Serializer for SizedSerializer {
     async fn write<W: ClickhouseWrite>(
         type_: &Type,
@@ -18,52 +65,12 @@ impl Serializer for SizedSerializer {
         writer: &mut W,
         _state: &mut SerializerState,
     ) -> Result<()> {
-        for value in values {
-            match value.justify_null_ref(type_).as_ref() {
-                Value::Int8(x) => writer.write_i8(*x).await?,
-                Value::Int16(x) => writer.write_i16_le(*x).await?,
-                Value::Int32(x) => writer.write_i32_le(*x).await?,
-                Value::Int64(x) => writer.write_i64_le(*x).await?,
-                Value::Int128(x) => writer.write_i128_le(*x).await?,
-                Value::Int256(x) => writer.write_all(&swap_endian_256(x.0)[..]).await?,
-                Value::UInt8(x) => writer.write_u8(*x).await?,
-                Value::UInt16(x) => writer.write_u16_le(*x).await?,
-                Value::UInt32(x) => writer.write_u32_le(*x).await?,
-                Value::UInt64(x) => writer.write_u64_le(*x).await?,
-                Value::UInt128(x) => writer.write_u128_le(*x).await?,
-                Value::UInt256(x) => writer.write_all(&swap_endian_256(x.0)[..]).await?,
-                Value::Float32(x) => writer.write_u32_le(x.to_bits()).await?,
-                Value::Float64(x) => writer.write_u64_le(x.to_bits()).await?,
-                Value::BFloat16(x) => writer.write_u16_le(serialize_bf16_to_bits(x)).await?,
-                Value::Decimal32(_, x) => writer.write_i32_le(*x).await?,
-                Value::Decimal64(_, x) => writer.write_i64_le(*x).await?,
-                Value::Decimal128(_, x) => writer.write_i128_le(*x).await?,
-                Value::Decimal256(_, x) => writer.write_all(&swap_endian_256(x.0)[..]).await?,
-                Value::Uuid(x) => {
-                    let n = x.as_u128();
-                    let n1 = (n >> 64) as u64;
-                    let n2 = n as u64;
-                    writer.write_u64_le(n1).await?;
-                    writer.write_u64_le(n2).await?;
-                }
-                Value::Date(x) => writer.write_u16_le(x.0).await?,
-                Value::DateTime(x) => writer.write_u32_le(x.1).await?,
-                Value::DateTime64(x) => writer.write_u64_le(x.1).await?,
-                Value::Ipv4(x) => writer.write_u32_le(x.0.into()).await?,
-                Value::Ipv6(x) => writer.write_all(&x.octets()[..]).await?,
-                Value::Enum8(x) => writer.write_i8(*x).await?,
-                Value::Enum16(x) => writer.write_i16_le(*x).await?,
-                Value::Bool(x) => writer.write_u8(*x as u8).await?,
-                Value::Date32(x) => writer.write_i32_le(x.0).await?,
-                Value::Time(x) => writer.write_i32_le(*x).await?,
-                Value::Time64(_, x) => writer.write_i64_le(*x).await?,
-                x => {
-                    return Err(crate::NativeclickError::SerializeError(format!(
-                        "cannot write {x:?} as {type_}"
-                    )));
-                }
-            }
+        let width = super::super::deserialize::sized::width(type_).unwrap_or(8);
+        let mut out = Vec::with_capacity(values.len() * width);
+        for value in &values {
+            encode(type_, value, &mut out)?;
         }
+        writer.write_all(&out).await?;
         Ok(())
     }
 }

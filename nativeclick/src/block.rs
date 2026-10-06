@@ -115,7 +115,7 @@ impl<'a> Iterator for BlockRowIter<'a> {
         if self.row >= self.block.rows {
             return None;
         }
-        let mut out = Vec::new();
+        let mut out = Vec::with_capacity(self.block.column_data.len());
         for (name, value) in self.block.column_data.iter() {
             out.push((&**name, value.get(self.row as usize)?));
         }
@@ -136,7 +136,7 @@ impl<'a> Iterator for BlockRowValueIter<'a> {
         if self.column_data.is_empty() {
             return None;
         }
-        let mut out = Vec::new();
+        let mut out = Vec::with_capacity(self.column_data.len());
         for (name, type_, pop) in self.column_data.iter_mut() {
             out.push((*name, *type_, pop.next()?));
         }
@@ -177,7 +177,7 @@ impl Block {
     pub fn take_iter_rows(&mut self) -> BlockRowValueIter<'_> {
         let mut column_data = IndexMap::new();
         std::mem::swap(&mut self.column_data, &mut column_data);
-        let mut out = Vec::with_capacity(self.rows as usize);
+        let mut out = Vec::with_capacity(column_data.len());
         for (name, values) in column_data.into_iter() {
             let (name, type_) = self.column_types.get_key_value(&name).unwrap();
             out.push((&**name, type_.strip_low_cardinality(), values.into_iter()));
@@ -266,7 +266,7 @@ impl Block {
                 writer.write_u8(0).await?; // default serialization
             }
             if data.len() != self.rows as usize {
-                return Err(NativeclickError::ProtocolError(format!(
+                return Err(NativeclickError::SerializeError(format!(
                     "row and column length mismatch. {} != {}",
                     data.len(),
                     self.rows

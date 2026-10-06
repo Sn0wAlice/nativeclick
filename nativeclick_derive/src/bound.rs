@@ -15,7 +15,6 @@ pub fn without_defaults(generics: &syn::Generics) -> syn::Generics {
             .iter()
             .map(|param| match param {
                 syn::GenericParam::Type(param) => syn::GenericParam::Type(syn::TypeParam {
-                    eq_token: None,
                     default: None,
                     ..param.clone()
                 }),
@@ -122,7 +121,7 @@ pub fn with_bound(
         fn visit_type(&mut self, ty: &'ast syn::Type) {
             match ty {
                 syn::Type::Array(ty) => self.visit_type(&ty.elem),
-                syn::Type::BareFn(ty) => {
+                syn::Type::FnPtr(ty) => {
                     for arg in &ty.inputs {
                         self.visit_type(&arg.ty);
                     }
@@ -178,13 +177,13 @@ pub fn with_bound(
                             | syn::GenericArgument::Constraint(_)
                             | syn::GenericArgument::AssocConst(_)
                             | syn::GenericArgument::Const(_) => {}
-                            _ => todo!(),
+                            _ => {}
                         }
                     }
                 }
                 syn::PathArguments::Parenthesized(arguments) => {
                     for argument in &arguments.inputs {
-                        self.visit_type(argument);
+                        self.visit_type(&argument.ty);
                     }
                     self.visit_return_type(&arguments.output);
                 }
@@ -202,8 +201,8 @@ pub fn with_bound(
             match bound {
                 syn::TypeParamBound::Trait(bound) => self.visit_path(&bound.path),
                 syn::TypeParamBound::Lifetime(_) => {}
-                syn::TypeParamBound::Verbatim(_) => todo!(),
-                _ => todo!(),
+                // Nothing to visit in other (verbatim or future) bounds.
+                _ => {}
             }
         }
 
@@ -237,12 +236,14 @@ pub fn with_bound(
         .map(|param| param.ident.clone())
         .filter(|id| relevant_type_params.contains(id))
         .map(|id| syn::TypePath {
+            attrs: vec![],
             qself: None,
             path: id.into(),
         })
         .chain(associated_type_usage.into_iter().cloned())
         .map(|bounded_ty| {
             syn::WherePredicate::Type(syn::PredicateType {
+                attrs: vec![],
                 lifetimes: None,
                 // the type parameter that is being bounded e.g. T
                 bounded_ty: syn::Type::Path(bounded_ty),
@@ -253,8 +254,9 @@ pub fn with_bound(
                     .map(|bound| {
                         syn::TypeParamBound::Trait(syn::TraitBound {
                             paren_token: None,
-                            modifier: syn::TraitBoundModifier::None,
                             lifetimes: None,
+                            modifiers: Default::default(),
+                            maybe: None,
                             path: (*bound).clone(),
                         })
                     })

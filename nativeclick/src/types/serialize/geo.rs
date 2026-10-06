@@ -45,33 +45,31 @@ impl Serializer for PointSerializer {
 }
 
 macro_rules! array_ser {
-    ($name:ident, $item:ty) => {
-        paste::paste! {
-            pub struct [<$name Serializer>];
-            impl super::array::ArraySerializerGeneric for [<$name Serializer>] {
-                fn inner_type(_type_: &Type) -> &Type {
-                    &Type::$item
+    ($serializer:ident, $name:ident, $item:ident) => {
+        pub struct $serializer;
+        impl super::array::ArraySerializerGeneric for $serializer {
+            fn inner_type(_type_: &Type) -> &Type {
+                &Type::$item
+            }
+            fn value_len(value: &Value) -> usize {
+                match value {
+                    Value::$name(array) => array.0.len(),
+                    _ => unreachable!(),
                 }
-                fn value_len(value: &Value) -> usize {
-                    match value {
-                        Value::$name(array) => array.0.len(),
-                        _ => unreachable!()
-                    }
-                }
-                fn values(value: Value) -> Vec<Value> {
-                    match value {
-                        // The into_iter/collect is annoying, but unavoidable if we want
-                        // to give strong types to the user inside the containers rather than
-                        // [Value]s.
-                        Value::$name(array) => array.0.into_iter().map(Value::$item).collect(),
-                        _ => unreachable!()
-                    }
+            }
+            fn values(value: Value) -> Vec<Value> {
+                match value {
+                    // The into_iter/collect is annoying, but unavoidable if we want
+                    // to give strong types to the user inside the containers rather than
+                    // [Value]s.
+                    Value::$name(array) => array.0.into_iter().map(Value::$item).collect(),
+                    _ => unreachable!(),
                 }
             }
         }
     };
 }
 
-array_ser!(Ring, Point);
-array_ser!(Polygon, Ring);
-array_ser!(MultiPolygon, Polygon);
+array_ser!(RingSerializer, Ring, Point);
+array_ser!(PolygonSerializer, Polygon, Ring);
+array_ser!(MultiPolygonSerializer, MultiPolygon, Polygon);

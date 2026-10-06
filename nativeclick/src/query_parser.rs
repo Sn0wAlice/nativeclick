@@ -1,101 +1,114 @@
+//! Minimal SQL lexing for client-side `$N` arguments and for splitting statements: it only needs
+//! to know where strings, quoted identifiers, comments and heredocs start and end.
+
 use crate::Value;
-use compiler_tools::TokenParse;
-use compiler_tools::util::parse_str;
-use compiler_tools_derive::token_parse;
 use std::fmt::Write;
 
-fn parse_heredoc(input: &str) -> Option<(&str, &str)> {
-    let (tag, remaining) = parse_str::<'$'>(input)?;
-
-    let reoccur_index = remaining.find(tag)?;
-
-    Some((
-        &input[..tag.len() * 2 + reoccur_index],
-        &input[tag.len() * 2 + reoccur_index..],
-    ))
+#[derive(Debug, PartialEq)]
+enum Piece<'a> {
+    /// Copied as is: SQL text, strings, identifiers, comments, heredocs.
+    Text(&'a str),
+    /// `$N`: the N-th client-side argument (the text is kept for out-of-range indexes).
+    Argument(usize, &'a str),
+    /// `$$`, written as a single `$`.
+    EscapedDollar,
+    Semicolon,
 }
 
-#[token_parse]
-#[derive(PartialEq, Clone, Copy, Debug)]
-enum Token<'a> {
-    #[token(regex = "$[0-9]+")]
-    ClientArgument(&'a str),
-    #[token(parse_fn = "parse_heredoc")]
-    Heredoc(&'a str),
-    #[token(regex = "--[^\n]*")]
-    CommentDash(&'a str),
-    #[token(regex = "/\\*.*\\*/")]
-    CommentBlock(&'a str),
+/// Length of a quoted section starting at `bytes[0]`, up to its unescaped closing quote (or the end).
+fn quoted_len(bytes: &[u8]) -> usize {
+    let quote = bytes[0];
+    let mut i = 1;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'\\' => i += 2,
+            c if c == quote => return i + 1,
+            _ => i += 1,
+        }
+    }
+    bytes.len()
+}
 
-    OpeningRoundBracket = "(",
-    ClosingRoundBracket = ")",
-    OpeningSquareBracket = "[",
-    ClosingSquareBracket = "]",
-    OpeningCurlyBrace = "{",
-    ClosingCurlyBrace = "}",
-    Comma = ",",
-    Semicolon = ";",
-    VerticalDelimiter = "\\g",
-    Dot = ".",
-    Asterisk = "*",
-    Plus = "+",
-    Minus = "-",
-    Slash = "/",
-    Percent = "%",
-    Arrow = "->",
-    QuestionMark = "?",
-    Colon = ":",
-    DoubleColon = "::",
-    #[token(literal = "=")]
-    Equals(&'a str) = "==",
-    #[token(literal = "<>")]
-    NotEquals(&'a str) = "!=",
-    Less = "<",
-    Greater = ">",
-    LessOrEquals = "<=",
-    GreaterOrEquals = ">=",
-    Concatenation = "||",
-    At = "@",
-    DoubleAt = "@@",
-    EscapedDollarSign = "$$",
-    DollarSign = "$",
+/// Length of a `$tag$...$tag$` heredoc starting at `input[0]`, if it is one.
+fn heredoc_len(input: &str) -> Option<usize> {
+    let close = input[1..].find('$')? + 1;
+    let tag = &input[..=close];
+    if close == 1
+        || !tag[1..close]
+            .bytes()
+            .all(|c| c.is_ascii_alphanumeric() || c == b'_')
+    {
+        return None;
+    }
+    let end = input[tag.len()..].find(tag)?;
+    Some(tag.len() * 2 + end)
+}
 
-    #[token(regex = "[ \n\t\r\x0C\x0B]+")]
-    Whitespace(&'a str),
-    #[token(regex = "#![^\n]*")]
-    CommentHashbang(&'a str),
-    #[token(regex = "#[^\n]*")]
-    CommentHash(&'a str),
-    #[token(regex = "[a-zA-Z_][0-9a-zA-Z_]*")]
-    BareWord(&'a str),
-    #[token(
-        regex_full = "(?i)0x[0-9a-f]+(\\.[0-9a-f]*)(p[+-]?[0-9]+)|0[0-7]+|[0-9]+(\\.[0-9]+|\\.)?(e[+-]?[0-9]+)?|\\.[0-9]+(e[+-]?[0-9]+)?|inf|infinity|nan"
-    )]
-    Number(&'a str),
-    #[token(parse_fn = "compiler_tools::util::parse_str::<'\\''>")]
-    StringLiteral(&'a str),
-    #[token(parse_fn = "compiler_tools::util::parse_str::<'`'>")]
-    QuotedIdentifierBacktick(&'a str),
-    #[token(parse_fn = "compiler_tools::util::parse_str::<'\"'>")]
-    QuotedIdentifierDoubleQuote(&'a str),
-    #[token(illegal)]
-    Illegal(char),
+/// Splits `query` into pieces; concatenating their text gives the query back.
+fn lex<'a>(query: &'a str) -> Vec<Piece<'a>> {
+    let bytes = query.as_bytes();
+    let mut pieces = vec![];
+    let mut text_start = 0;
+    let mut i = 0;
+    let flush = |pieces: &mut Vec<Piece<'a>>, start: usize, end: usize| {
+        if end > start {
+            pieces.push(Piece::Text(&query[start..end]));
+        }
+    };
+    while i < bytes.len() {
+        let rest = &query[i..];
+        let skip = match bytes[i] {
+            b'\'' | b'"' | b'`' => quoted_len(&bytes[i..]),
+            b'-' if rest.starts_with("--") => rest.find('\n').unwrap_or(rest.len()),
+            b'#' => rest.find('\n').unwrap_or(rest.len()),
+            b'/' if rest.starts_with("/*") => rest.find("*/").map(|x| x + 2).unwrap_or(rest.len()),
+            b'$' => {
+                if let Some(len) = heredoc_len(rest) {
+                    len
+                } else {
+                    flush(&mut pieces, text_start, i);
+                    if rest.starts_with("$$") {
+                        pieces.push(Piece::EscapedDollar);
+                        i += 2;
+                    } else {
+                        let digits = rest[1..].bytes().take_while(u8::is_ascii_digit).count();
+                        match rest[1..=digits].parse() {
+                            Ok(index) => pieces.push(Piece::Argument(index, &rest[..=digits])),
+                            Err(_) => pieces.push(Piece::Text("$")),
+                        }
+                        i += digits + 1;
+                    }
+                    text_start = i;
+                    continue;
+                }
+            }
+            b';' => {
+                flush(&mut pieces, text_start, i);
+                pieces.push(Piece::Semicolon);
+                i += 1;
+                text_start = i;
+                continue;
+            }
+            _ => 1,
+        };
+        i += skip;
+    }
+    flush(&mut pieces, text_start, bytes.len());
+    pieces
 }
 
 /// Parses a query and replaces arguments with values
 pub fn parse_query_arguments(query: &str, arguments: &[Value]) -> String {
-    let mut tokenizer = Tokenizer::new(query);
     let mut out = String::with_capacity(query.len() + 100);
-    while let Some(token) = tokenizer.next() {
-        match token.token {
-            Token::EscapedDollarSign => write!(&mut out, "{}", Token::DollarSign).unwrap(),
-            Token::ClientArgument(argument) => match argument[1..].parse::<usize>() {
-                Ok(index) if index <= arguments.len() && index > 0 => {
-                    write!(&mut out, "{}", arguments[index - 1]).unwrap()
-                }
-                _ => write!(&mut out, "{}", token.token).unwrap(),
-            },
-            t => write!(&mut out, "{t}").unwrap(),
+    for piece in lex(query) {
+        match piece {
+            Piece::Text(text) => out.push_str(text),
+            Piece::Argument(index, _) if index > 0 && index <= arguments.len() => {
+                write!(&mut out, "{}", arguments[index - 1]).unwrap()
+            }
+            Piece::Argument(_, text) => out.push_str(text),
+            Piece::EscapedDollar => out.push('$'),
+            Piece::Semicolon => out.push(';'),
         }
     }
     out
@@ -103,17 +116,15 @@ pub fn parse_query_arguments(query: &str, arguments: &[Value]) -> String {
 
 /// Splits a series of semicolon-delimited queries into individual queries
 pub fn split_query_statements(query: &str) -> Vec<String> {
-    let mut tokenizer = Tokenizer::new(query);
     let mut out = vec![String::new()];
-    while let Some(token) = tokenizer.next() {
-        match token.token {
-            Token::Semicolon => {
-                write!(out.last_mut().unwrap(), "{}", Token::Semicolon).unwrap();
-
+    for piece in lex(query) {
+        let current = out.last_mut().unwrap();
+        match piece {
+            Piece::Text(text) | Piece::Argument(_, text) => current.push_str(text),
+            Piece::EscapedDollar => current.push('$'),
+            Piece::Semicolon => {
+                current.push(';');
                 out.push(String::new());
-            }
-            token => {
-                write!(out.last_mut().unwrap(), "{token}").unwrap();
             }
         }
     }
@@ -126,7 +137,6 @@ pub fn split_query_statements(query: &str) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use compiler_tools::TokenParse;
 
     #[test]
     fn parse_tests() {
@@ -198,14 +208,11 @@ mod tests {
             "1 - 2 --sdfsdfsdf",
         ];
 
-        for test in tests {
-            let mut tokenizer = Tokenizer::new(test);
-            while let Some(token) = tokenizer.next() {
-                println!("{token}");
-                assert!(!matches!(token.token, Token::Illegal(_)));
-            }
-            println!();
+        // Without arguments, queries come back unchanged ($$ aside).
+        for test in tests.iter().filter(|x| !x.contains("$$")) {
+            assert_eq!(&parse_query_arguments(test, &[]), test);
         }
+        assert_eq!(parse_query_arguments("$$2$3", &[]), "$2$3");
     }
 
     #[test]
@@ -249,5 +256,33 @@ mod tests {
         assert_eq!(split_query_statements("X;\n\n\n",), vec!["X;"]);
         assert_eq!(split_query_statements("X\n\n\n",), vec!["X"]);
         assert_eq!(split_query_statements("",), Vec::<&str>::new());
+    }
+
+    #[test]
+    fn arguments_are_not_replaced_in_quoted_text_or_comments() {
+        let args = [Value::UInt32(7)];
+        for (query, expected) in [
+            (
+                "SELECT '$1', `$1`, \"$1\", $1",
+                "SELECT '$1', `$1`, \"$1\", 7",
+            ),
+            ("SELECT 'it\\'s $1', $1", "SELECT 'it\\'s $1', 7"),
+            ("SELECT $1 -- $1\n, $1", "SELECT 7 -- $1\n, 7"),
+            ("SELECT /* $1 */ $1 # $1", "SELECT /* $1 */ 7 # $1"),
+            ("SELECT $tag$ $1 ; $tag$, $1", "SELECT $tag$ $1 ; $tag$, 7"),
+            ("SELECT $1$1", "SELECT 77"),
+            ("SELECT $", "SELECT $"),
+            ("SELECT 'unterminated $1", "SELECT 'unterminated $1"),
+        ] {
+            assert_eq!(parse_query_arguments(query, &args), expected, "{query}");
+        }
+    }
+
+    #[test]
+    fn semicolons_in_quoted_text_do_not_split() {
+        assert_eq!(
+            split_query_statements("SELECT ';'; SELECT `a;b` -- ;\n; /* ; */ SELECT 1"),
+            vec!["SELECT ';';", "SELECT `a;b` -- ;\n;", "/* ; */ SELECT 1"]
+        );
     }
 }

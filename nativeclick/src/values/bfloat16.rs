@@ -59,25 +59,25 @@ impl std::fmt::Display for bf16 {
 
 /// Creates a default BFloat16 value
 #[cfg(feature = "bfloat16")]
-pub fn default_bf16_value() -> Value {
+pub(crate) fn default_bf16_value() -> Value {
     Value::BFloat16(bf16::ZERO)
 }
 
 /// Error stub for default value when feature is disabled
 #[cfg(not(feature = "bfloat16"))]
-pub fn default_bf16_value() -> Value {
+pub(crate) fn default_bf16_value() -> Value {
     panic!("BFloat16 support is disabled. Enable the 'bfloat16' feature to use BFloat16 types.")
 }
 
 /// Deserializes BFloat16 from bits when feature is enabled
 #[cfg(feature = "bfloat16")]
-pub fn deserialize_bf16_from_bits(bits: u16) -> Value {
+pub(crate) fn deserialize_bf16_from_bits(bits: u16) -> Value {
     Value::BFloat16(bf16::from_bits(bits))
 }
 
 /// Error stub for deserialization when feature is disabled
 #[cfg(not(feature = "bfloat16"))]
-pub fn deserialize_bf16_from_bits(_bits: u16) -> Value {
+pub(crate) fn deserialize_bf16_from_bits(_bits: u16) -> Value {
     panic!(
         "BFloat16 support is disabled. Enable the 'bfloat16' feature to deserialize BFloat16 values."
     )
@@ -85,13 +85,13 @@ pub fn deserialize_bf16_from_bits(_bits: u16) -> Value {
 
 /// Serializes BFloat16 to bits when feature is enabled
 #[cfg(feature = "bfloat16")]
-pub fn serialize_bf16_to_bits(value: &bf16) -> u16 {
+pub(crate) fn serialize_bf16_to_bits(value: &bf16) -> u16 {
     value.to_bits()
 }
 
 /// Error stub for serialization when feature is disabled
 #[cfg(not(feature = "bfloat16"))]
-pub fn serialize_bf16_to_bits(_value: &bf16) -> u16 {
+pub(crate) fn serialize_bf16_to_bits(_value: &bf16) -> u16 {
     panic!(
         "BFloat16 support is disabled. Enable the 'bfloat16' feature to serialize BFloat16 values."
     )
@@ -99,18 +99,18 @@ pub fn serialize_bf16_to_bits(_value: &bf16) -> u16 {
 
 /// Hashes a BFloat16 value
 #[cfg(feature = "bfloat16")]
-pub fn hash_bf16<H: std::hash::Hasher>(value: &bf16, state: &mut H) {
+pub(crate) fn hash_bf16<H: std::hash::Hasher>(value: &bf16, state: &mut H) {
     std::hash::Hash::hash(&value.to_bits(), state);
 }
 
 /// Stub hash when feature is disabled
 #[cfg(not(feature = "bfloat16"))]
-pub fn hash_bf16<H: std::hash::Hasher>(_value: &bf16, state: &mut H) {
+pub(crate) fn hash_bf16<H: std::hash::Hasher>(_value: &bf16, state: &mut H) {
     std::hash::Hash::hash(&0u16, state);
 }
 
 /// Checks if the bfloat16 feature is enabled at compile time
-pub const fn is_bfloat16_enabled() -> bool {
+pub(crate) const fn is_bfloat16_enabled() -> bool {
     cfg!(feature = "bfloat16")
 }
 

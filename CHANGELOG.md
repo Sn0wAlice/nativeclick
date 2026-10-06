@@ -44,6 +44,30 @@ The first release under the new versioning: `0.MAJOR.MINOR` follows the targeted
 - `NaiveDate` is supported, written as `Date` or `Date32` depending on the column.
 - `AggregateFunction` columns fail with a clear error pointing to `finalizeAggregation`.
 
+### Cleanup and performance
+
+- **Dependencies removed:**
+  - `build.rs` and `rustc_version` (dead);
+  - `paste` (unmaintained);
+  - `compiler-tools` and its derive. A small hand-written lexer replaces it for `$N` arguments and statement splitting, with the same behaviour plus tests on quoted text, comments and heredocs.
+- **Derive on `syn` 3:** the derive no longer panics on unusual generic bounds (`todo!()` removed).
+- **Type dispatch:** one codec table instead of four 40-arm matches.
+- **Errors:** new `ConnectionClosed`, `Compression` and `Unsupported` variants. `ProtocolError` is kept for real protocol violations by the server. Malformed offsets and maps are errors, not panics.
+- **Faster decoding:**
+  - fixed-size columns and offsets are read and written in one piece instead of one `await` per value;
+  - inserts resolve columns once per block instead of hashing each cell;
+  - rows are preallocated.
+
+  Measured with `examples/throughput.rs` (2M rows × 5 columns, ClickHouse 26.9 on localhost):
+
+  | | before | after |
+  |---|---|---|
+  | SELECT, blocks | 4.0 M rows/s | 6.1 M rows/s |
+  | SELECT, derived rows | 2.8 M rows/s | 3.6 M rows/s |
+  | INSERT, derived rows | 0.94 M rows/s | 1.5 M rows/s |
+
+  The remaining time is mostly compression (ZSTD from the server, LZ4 on inserts) and the `Value` allocated per cell.
+
 ### Breaking changes and how to migrate
 
 - **`Type`, `Value`, `NativeclickError` are `#[non_exhaustive]`, and `Type`/`Value` have new variants.** An exhaustive `match` on them needs a `_ =>` arm.
@@ -51,7 +75,11 @@ The first release under the new versioning: `0.MAJOR.MINOR` follows the targeted
 - **`ClientOptions` has new fields.** A struct literal needs `..Default::default()`.
 - **`Progress` and `BlockInfo` are `#[non_exhaustive]` and have new fields.** Build them with `Default::default()`.
 - **`DateTime64`/`DynDateTime64` keep their `u64` field.** It holds the raw bits of the signed value; use `from_ticks()`/`ticks()` for dates before 1970.
-- **New error variant `NativeclickError::Timeout`.**
+- **New error variants `Timeout`, `ConnectionClosed`, `Compression`, `Unsupported`.** Some errors moved out of `ProtocolError`:
+  - a closed connection is `ConnectionClosed`;
+  - a corrupt frame is `Compression`;
+  - oversized data is `DeserializeError`.
+- **The bfloat16 helper functions are no longer public.** These are `default_bf16_value`, `deserialize_bf16_from_bits`, `serialize_bf16_to_bits`, `hash_bf16` and `is_bfloat16_enabled`.
 - **Type names are printed as the server prints them,** e.g. `DateTime64(3, 'UTC')`, `Map(K, V)`.
 - **`FromSql` has a new provided method, `from_sql_column`,** which converts a value as read from a column. Existing implementations need no change. Code that calls `FromSql::from_sql` directly on a column type should call `nativeclick::from_sql_resolved` instead, to look through `LowCardinality`, `Variant`/`Dynamic` rows and similar wrappers.
 - **Each query now sends two settings:** `output_format_native_write_json_as_string` and `output_format_native_use_flattened_dynamic_and_json_serialization`. They select the JSON and Dynamic formats this client reads, and a caller's own settings override them.

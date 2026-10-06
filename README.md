@@ -8,10 +8,6 @@ Nativeclick is a pure Rust SDK for working with [Clickhouse](https://clickhouse.
 
 See [example usage](https://github.com/Sn0wAlice/nativeclick/blob/master/nativeclick/examples/basic.rs).
 
-## Unsupported Features
-
-- Clickhouse `Enum8` and `Enum16` types -- use `LowCardinality` instead.
-
 ## Running the tests
 
 A Clickhouse server is required to run the integration tests. One can be started easily in a Docker container:
@@ -30,7 +26,7 @@ $ cargo nextest run
 ## Feature flags
 
 - `derive`: Enable [nativeclick_derive], providing a derive macro for the [Row] trait. Default.
-- `compression`: `lz4` compression for client/server communication. Default.
+- `compression`: compression for client/server communication: sends `lz4`, reads `lz4` and `zstd` (the server default since ClickHouse 26.9). Default.
 - `serde`: Derivation of [serde::Serialize] and [serde::Deserialize] on various objects, and JSON support. Default.
 - `tls`: TLS support via [tokio-rustls](https://crates.io/crates/tokio-rustls).
 - `refinery`: Migrations via [refinery](https://crates.io/crates/refinery).

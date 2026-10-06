@@ -9,7 +9,7 @@ description = "Nativeclick is a pure Rust SDK for working with Clickhouse with t
 keywords = ["clickhouse", "database", "tokio", "sql"]
 readme = "../README.md"
 autotests = false
-rust-version = "1.85.0"
+rust-version = "1.89"
 
 [package.metadata.docs.rs]
 all-features = true

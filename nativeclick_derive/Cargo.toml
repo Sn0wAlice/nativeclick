@@ -7,7 +7,7 @@ license = "MIT OR Apache-2.0"
 repository = "https://github.com/Sn0wAlice/nativeclick"
 description = "proc-macro crate for nativeclick"
 keywords = [ "clickhouse", "database", "tokio", "sql" ]
-rust-version = "1.85.0"
+rust-version = "1.89"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 

@@ -1,6 +1,6 @@
 use std::num::TryFromIntError;
 
-use chrono::{Duration, FixedOffset, NaiveDate, ParseError, TimeZone, Utc};
+use chrono::{Duration, FixedOffset, NaiveDate, TimeZone, Utc};
 use chrono_tz::{Tz, UTC};
 
 use crate::{
@@ -114,7 +114,7 @@ impl<'de> serde::Deserialize<'de> for DateTime {
         let raw: String = String::deserialize(deserializer)?;
         let date: chrono::DateTime<FixedOffset> =
             chrono::DateTime::<FixedOffset>::parse_from_rfc3339(&raw)
-                .map_err(|e: ParseError| serde::de::Error::custom(e.to_string()))?;
+                .map_err(|e: chrono::ParseError| serde::de::Error::custom(e.to_string()))?;
 
         date.try_into()
             .map_err(|e: TryFromIntError| serde::de::Error::custom(e.to_string()))
@@ -238,7 +238,7 @@ impl<'de> serde::Deserialize<'de> for DynDateTime64 {
         let raw: String = String::deserialize(deserializer)?;
         let date: chrono::DateTime<Utc> = Utc.from_utc_datetime(
             &chrono::DateTime::<FixedOffset>::parse_from_rfc3339(&raw)
-                .map_err(|e: ParseError| serde::de::Error::custom(e.to_string()))?
+                .map_err(|e: chrono::ParseError| serde::de::Error::custom(e.to_string()))?
                 .naive_utc(),
         );
 
@@ -268,7 +268,7 @@ impl<'de, const PRECISION: usize> serde::Deserialize<'de> for DateTime64<PRECISI
         let raw: String = String::deserialize(deserializer)?;
         let date: chrono::DateTime<Utc> = Utc.from_utc_datetime(
             &chrono::DateTime::<FixedOffset>::parse_from_rfc3339(&raw)
-                .map_err(|e: ParseError| serde::de::Error::custom(e.to_string()))?
+                .map_err(|e: chrono::ParseError| serde::de::Error::custom(e.to_string()))?
                 .naive_utc(),
         );
 

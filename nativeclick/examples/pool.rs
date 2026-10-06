@@ -80,7 +80,7 @@ async fn main() {
 
     // Read back rows
     let mut all_rows = client
-        .query::<MyUserData>("SELECT * FROM nativeclick_example;")
+        .query::<MyUserData, _>("SELECT * FROM nativeclick_example;")
         .await
         .unwrap();
 

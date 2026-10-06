@@ -247,12 +247,12 @@ impl Value {
         }
     }
 
-    /// Converts a [`Value`] to a [`T`] type by calling [`T::from_sql`].
+    /// Converts a [`Value`] to a `T` type by calling `T::from_sql`.
     pub fn to_value<T: FromSql>(self, type_: &Type) -> Result<T> {
         T::from_sql(type_, self)
     }
 
-    /// Converts a [`T`] type to a [`Value`] by calling [`T::to_sql`].
+    /// Converts a `T` type to a [`Value`] by calling `T::to_sql`.
     pub fn from_value<T: ToSql>(value: T) -> Result<Self> {
         value.to_sql(None)
     }

@@ -2,7 +2,7 @@ use std::ops::{Deref, DerefMut};
 
 use crate::{FromSql, Result, ToSql, Type, Value, unexpected_type};
 
-/// Wrapper over Vec<u8> to allow more efficient serialization/deserialization of raw bytes
+/// Wrapper over `Vec<u8>` to allow more efficient serialization/deserialization of raw bytes
 /// The corresponding Clickhouse type here is String or FixedString, not Array(UInt8).
 /// Conversion to Array(UInt8) will happen, but it is not efficient.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Default)]

@@ -1,7 +1,7 @@
 /// Query execution progress.
 /// Values are delta and must be summed.
 ///
-/// See https://clickhouse.com/codebrowser/ClickHouse/src/IO/Progress.h.html
+/// See <https://clickhouse.com/codebrowser/ClickHouse/src/IO/Progress.h.html>
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct Progress {
     pub read_rows: u64,

@@ -228,7 +228,7 @@ impl<T: FromSql + Hash + Eq, Y: FromSql> FromSql for HashMap<T, Y> {
         match value {
             Value::Map(x, y) => {
                 let mut out = HashMap::new();
-                for (x, y) in x.into_iter().zip(y.into_iter()) {
+                for (x, y) in x.into_iter().zip(y) {
                     out.insert(T::from_sql(x_type, x)?, Y::from_sql(y_type, y)?);
                 }
                 Ok(out)
@@ -250,7 +250,7 @@ impl<T: FromSql + Ord, Y: FromSql> FromSql for BTreeMap<T, Y> {
         match value {
             Value::Map(x, y) => {
                 let mut out = BTreeMap::new();
-                for (x, y) in x.into_iter().zip(y.into_iter()) {
+                for (x, y) in x.into_iter().zip(y) {
                     out.insert(T::from_sql(x_type, x)?, Y::from_sql(y_type, y)?);
                 }
                 Ok(out)
@@ -272,7 +272,7 @@ impl<T: FromSql + Hash + Eq, Y: FromSql> FromSql for IndexMap<T, Y> {
         match value {
             Value::Map(x, y) => {
                 let mut out = IndexMap::new();
-                for (x, y) in x.into_iter().zip(y.into_iter()) {
+                for (x, y) in x.into_iter().zip(y) {
                     out.insert(T::from_sql(x_type, x)?, Y::from_sql(y_type, y)?);
                 }
                 Ok(out)

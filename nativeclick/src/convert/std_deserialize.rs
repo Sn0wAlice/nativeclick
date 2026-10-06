@@ -304,7 +304,7 @@ impl<T: FromSql + Default + Copy, const N: usize> FromSql for [T; N] {
         match value {
             Value::Array(x) => {
                 if x.len() != N {
-                    return Err(KlickhouseError::DeserializeError(format!(
+                    return Err(NativeclickError::DeserializeError(format!(
                         "invalid length for array: {} expected {}",
                         x.len(),
                         N
@@ -341,10 +341,10 @@ macro_rules! tuple_impls {
                         _ => unimplemented!(),
                     };
                     if values.len() != subtype.len() {
-                        return Err(KlickhouseError::DeserializeError(format!("unexpected type: mismatch tuple length expected {}, got {}", subtype.len(), values.len())));
+                        return Err(NativeclickError::DeserializeError(format!("unexpected type: mismatch tuple length expected {}, got {}", subtype.len(), values.len())));
                     }
                     if values.len() != $len {
-                        return Err(KlickhouseError::DeserializeError(format!("unexpected type: mismatch tuple length expected {}, got {}", $len, values.len())));
+                        return Err(NativeclickError::DeserializeError(format!("unexpected type: mismatch tuple length expected {}, got {}", $len, values.len())));
                     }
                     let mut deque = ::std::collections::VecDeque::from(values);
                     Ok((

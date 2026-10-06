@@ -1,11 +1,11 @@
-#[derive(klickhouse::Row, Debug, PartialEq, Clone)]
+#[derive(nativeclick::Row, Debug, PartialEq, Clone)]
 struct TestRow {
-    b: klickhouse::Bytes,
-    a: klickhouse::Bytes,
+    b: nativeclick::Bytes,
+    a: nativeclick::Bytes,
 }
 
 // This test checks that the order of declaration in the struct does not matter for type hinting.
-// See https://github.com/Protryon/klickhouse/issues/34
+// See https://github.com/Sn0wAlice/nativeclick/issues/34
 #[tokio::test]
 async fn ordering() {
     let client = super::get_client().await;

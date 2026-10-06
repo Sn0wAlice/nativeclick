@@ -1,6 +1,6 @@
 use std::fmt;
 
-use crate::{KlickhouseError, Result, ToSql, Value};
+use crate::{NativeclickError, Result, ToSql, Value};
 
 mod select;
 pub use select::*;
@@ -15,7 +15,7 @@ impl fmt::Display for ParsedQuery {
 }
 
 impl TryInto<ParsedQuery> for String {
-    type Error = KlickhouseError;
+    type Error = NativeclickError;
 
     fn try_into(self) -> Result<ParsedQuery> {
         Ok(ParsedQuery(self))
@@ -23,7 +23,7 @@ impl TryInto<ParsedQuery> for String {
 }
 
 impl TryInto<ParsedQuery> for &str {
-    type Error = KlickhouseError;
+    type Error = NativeclickError;
 
     fn try_into(self) -> Result<ParsedQuery> {
         Ok(ParsedQuery(self.to_string()))
@@ -31,7 +31,7 @@ impl TryInto<ParsedQuery> for &str {
 }
 
 impl TryInto<ParsedQuery> for &String {
-    type Error = KlickhouseError;
+    type Error = NativeclickError;
 
     fn try_into(self) -> Result<ParsedQuery> {
         Ok(ParsedQuery(self.clone()))
@@ -69,7 +69,7 @@ impl<'a> QueryBuilder<'a> {
 }
 
 impl TryInto<ParsedQuery> for QueryBuilder<'_> {
-    type Error = KlickhouseError;
+    type Error = NativeclickError;
 
     fn try_into(self) -> Result<ParsedQuery> {
         let arguments = self.arguments.into_iter().collect::<Result<Vec<_>>>()?;

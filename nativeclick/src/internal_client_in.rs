@@ -1,6 +1,6 @@
 use crate::Result;
 use crate::{
-    KlickhouseError,
+    NativeclickError,
     block::Block,
     io::ClickhouseRead,
     progress::Progress,
@@ -62,7 +62,7 @@ impl<R: ClickhouseRead + 'static> InternalClientIn<R> {
     #[cfg(not(feature = "compression"))]
     async fn decompress_data(&mut self, _compression: CompressionMethod) -> Result<Block> {
         panic!(
-            "attempted to use compression when not compiled with `compression` feature in klickhouse"
+            "attempted to use compression when not compiled with `compression` feature in nativeclick"
         );
     }
 
@@ -177,7 +177,7 @@ impl<R: ClickhouseRead + 'static> InternalClientIn<R> {
                 };
                 let size = self.reader.read_var_uint().await?;
                 if size as usize > MAX_STRING_SIZE {
-                    return Err(KlickhouseError::ProtocolError(format!(
+                    return Err(NativeclickError::ProtocolError(format!(
                         "table status response size too large. {size} > {MAX_STRING_SIZE}"
                     )));
                 }
@@ -216,7 +216,7 @@ impl<R: ClickhouseRead + 'static> InternalClientIn<R> {
             ServerPacketId::PartUUIDs => {
                 let len = self.reader.read_var_uint().await?;
                 if len as usize > MAX_STRING_SIZE {
-                    return Err(KlickhouseError::ProtocolError(format!(
+                    return Err(NativeclickError::ProtocolError(format!(
                         "PartUUIDs response size too large. {len} > {MAX_STRING_SIZE}"
                     )));
                 }
@@ -241,7 +241,7 @@ impl<R: ClickhouseRead + 'static> InternalClientIn<R> {
         match self.receive_packet().await? {
             ServerPacket::Hello(hello) => Ok(hello),
             ServerPacket::Exception(e) => Err(e.emit()),
-            packet => Err(KlickhouseError::ProtocolError(format!(
+            packet => Err(NativeclickError::ProtocolError(format!(
                 "unexpected packet {packet:?}, expected server hello"
             ))),
         }

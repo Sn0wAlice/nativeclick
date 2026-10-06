@@ -1,6 +1,6 @@
 [workspace]
 members = [
-    "klickhouse",
-    "klickhouse_derive",
+    "nativeclick",
+    "nativeclick_derive",
 ]
 resolver = "2"

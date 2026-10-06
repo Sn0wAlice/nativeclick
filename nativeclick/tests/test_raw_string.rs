@@ -1,6 +1,6 @@
-use klickhouse::Bytes;
+use nativeclick::Bytes;
 
-#[derive(klickhouse::Row, Debug, Default, Clone, PartialEq, Eq)]
+#[derive(nativeclick::Row, Debug, Default, Clone, PartialEq, Eq)]
 pub struct TestRawString {
     raw_string: Bytes,
 }

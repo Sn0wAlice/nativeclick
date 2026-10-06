@@ -1,7 +1,7 @@
 use std::net::SocketAddr;
 use tokio::net::ToSocketAddrs;
 
-use crate::{Client, ClientOptions, KlickhouseError, convert::UnitValue};
+use crate::{Client, ClientOptions, NativeclickError, convert::UnitValue};
 
 #[derive(Clone)]
 pub struct ConnectionManager {
@@ -30,7 +30,7 @@ impl ConnectionManager {
 
 impl bb8::ManageConnection for ConnectionManager {
     type Connection = Client;
-    type Error = KlickhouseError;
+    type Error = NativeclickError;
 
     async fn connect(&self) -> Result<Self::Connection, Self::Error> {
         let client = Client::connect(&self.destination[..], self.options.clone()).await?;

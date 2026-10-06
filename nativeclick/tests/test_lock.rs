@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use klickhouse::ClickhouseLock;
+use nativeclick::ClickhouseLock;
 
 #[tokio::test]
 async fn test_client() {

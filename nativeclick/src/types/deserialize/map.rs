@@ -1,7 +1,7 @@
 use tokio::io::AsyncReadExt;
 
 use crate::{
-    KlickhouseError, Result, io::ClickhouseRead, protocol::MAX_STRING_SIZE, values::Value,
+    NativeclickError, Result, io::ClickhouseRead, protocol::MAX_STRING_SIZE, values::Value,
 };
 
 use super::{Deserializer, DeserializerState, Type};
@@ -34,7 +34,7 @@ impl Deserializer for MapDeserializer {
         state: &mut DeserializerState,
     ) -> Result<Vec<Value>> {
         if rows > MAX_STRING_SIZE {
-            return Err(KlickhouseError::ProtocolError(format!(
+            return Err(NativeclickError::ProtocolError(format!(
                 "read_n response size too large for map. {rows} > {MAX_STRING_SIZE}"
             )));
         }

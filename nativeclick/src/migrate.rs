@@ -6,7 +6,7 @@ use std::time::{Duration, Instant};
 use time::OffsetDateTime;
 use time::format_description::well_known::Rfc3339;
 
-use crate::{Client, KlickhouseError, Result, Row, Type, Value};
+use crate::{Client, NativeclickError, Result, Row, Type, Value};
 
 impl Row for Migration {
     const COLUMN_COUNT: Option<usize> = Some(4);
@@ -22,7 +22,7 @@ impl Row for Migration {
 
     fn deserialize_row(map: Vec<(&str, &Type, Value)>) -> Result<Self> {
         if map.len() != 4 {
-            return Err(KlickhouseError::DeserializeError(
+            return Err(NativeclickError::DeserializeError(
                 "bad column count for migration".to_string(),
             ));
         }
@@ -34,7 +34,7 @@ impl Row for Migration {
             match name {
                 "version" => {
                     if version.is_some() {
-                        return Err(KlickhouseError::DeserializeError(
+                        return Err(NativeclickError::DeserializeError(
                             "duplicate version column".to_string(),
                         ));
                     }
@@ -42,7 +42,7 @@ impl Row for Migration {
                 }
                 "name" => {
                     if name_out.is_some() {
-                        return Err(KlickhouseError::DeserializeError(
+                        return Err(NativeclickError::DeserializeError(
                             "duplicate name column".to_string(),
                         ));
                     }
@@ -50,7 +50,7 @@ impl Row for Migration {
                 }
                 "applied_on" => {
                     if applied_on.is_some() {
-                        return Err(KlickhouseError::DeserializeError(
+                        return Err(NativeclickError::DeserializeError(
                             "duplicate applied_on column".to_string(),
                         ));
                     }
@@ -58,42 +58,42 @@ impl Row for Migration {
                 }
                 "checksum" => {
                     if checksum.is_some() {
-                        return Err(KlickhouseError::DeserializeError(
+                        return Err(NativeclickError::DeserializeError(
                             "duplicate checksum column".to_string(),
                         ));
                     }
                     checksum = Some(String::from_sql(type_, value)?);
                 }
                 name => {
-                    return Err(KlickhouseError::DeserializeError(format!(
+                    return Err(NativeclickError::DeserializeError(format!(
                         "unexpected column {name}"
                     )));
                 }
             }
         }
         if version.is_none() {
-            return Err(KlickhouseError::DeserializeError(
+            return Err(NativeclickError::DeserializeError(
                 "missing version".to_string(),
             ));
         }
         if name_out.is_none() {
-            return Err(KlickhouseError::DeserializeError(
+            return Err(NativeclickError::DeserializeError(
                 "missing name".to_string(),
             ));
         }
         if applied_on.is_none() {
-            return Err(KlickhouseError::DeserializeError(
+            return Err(NativeclickError::DeserializeError(
                 "missing applied_on".to_string(),
             ));
         }
         if checksum.is_none() {
-            return Err(KlickhouseError::DeserializeError(
+            return Err(NativeclickError::DeserializeError(
                 "missing checksum".to_string(),
             ));
         }
         let applied_on =
             OffsetDateTime::parse(applied_on.as_ref().unwrap(), &Rfc3339).map_err(|e| {
-                KlickhouseError::DeserializeError(format!("failed to parse time: {e:?}"))
+                NativeclickError::DeserializeError(format!("failed to parse time: {e:?}"))
             })?;
 
         Ok(Migration::applied(
@@ -101,7 +101,7 @@ impl Row for Migration {
             name_out.unwrap(),
             applied_on,
             checksum.unwrap().parse::<u64>().map_err(|e| {
-                KlickhouseError::DeserializeError(format!("failed to parse checksum: {e:?}"))
+                NativeclickError::DeserializeError(format!("failed to parse checksum: {e:?}"))
             })?,
         ))
     }
@@ -116,7 +116,7 @@ impl Row for Migration {
 
 #[async_trait::async_trait]
 impl AsyncTransaction for Client {
-    type Error = KlickhouseError;
+    type Error = NativeclickError;
 
     async fn execute<'a, T: Iterator<Item = &'a str> + Send>(
         &mut self,
@@ -200,7 +200,7 @@ impl ClusterMigration {
 
 #[async_trait::async_trait]
 impl AsyncTransaction for ClusterMigration {
-    type Error = KlickhouseError;
+    type Error = NativeclickError;
     async fn execute<'a, T: Iterator<Item = &'a str> + Send>(
         &mut self,
         queries: T,

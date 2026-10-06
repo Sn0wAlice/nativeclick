@@ -1,9 +1,9 @@
 use std::collections::HashMap;
 
 use chrono::Utc;
-use klickhouse::{DateTime64, Uuid};
+use nativeclick::{DateTime64, Uuid};
 
-#[derive(klickhouse::Row, Debug, Default, PartialEq, Clone)]
+#[derive(nativeclick::Row, Debug, Default, PartialEq, Clone)]
 pub struct TestSerialize {
     d_uuid: Uuid,
     d_date: DateTime64<6>,
@@ -14,13 +14,13 @@ pub struct TestSerialize {
     d_bool: bool,
     d_string: String,
 
-    #[klickhouse(rename = "nest.nest_string")]
+    #[nativeclick(rename = "nest.nest_string")]
     nest_string: Vec<String>,
-    #[klickhouse(rename = "nest.nest_u64")]
+    #[nativeclick(rename = "nest.nest_u64")]
     nest_u64: Vec<Option<u64>>,
-    #[klickhouse(rename = "nest.nest_null_string")]
+    #[nativeclick(rename = "nest.nest_null_string")]
     nest_null_string: Vec<Option<String>>,
-    #[klickhouse(rename = "nest.nest_i16")]
+    #[nativeclick(rename = "nest.nest_i16")]
     nest_i16: Vec<i16>,
 
     d_map_u64: HashMap<String, u64>,

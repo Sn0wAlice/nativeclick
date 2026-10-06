@@ -1,10 +1,12 @@
-# Klickhouse
+# Nativeclick
 
-Klickhouse is a pure Rust SDK for working with [Clickhouse](https://clickhouse.tech/docs/en/) with the native protocol in async environments with minimal boilerplate and maximal performance.
+> Fork of [Protryon/klickhouse](https://github.com/Protryon/klickhouse) (`master` branch).
+
+Nativeclick is a pure Rust SDK for working with [Clickhouse](https://clickhouse.tech/docs/en/) with the native protocol in async environments with minimal boilerplate and maximal performance.
 
 ## Example Usage
 
-See [example usage](https://github.com/Protryon/klickhouse/blob/master/klickhouse/examples/basic.rs).
+See [example usage](https://github.com/Sn0wAlice/nativeclick/blob/master/nativeclick/examples/basic.rs).
 
 ## Unsupported Features
 
@@ -16,10 +18,10 @@ A Clickhouse server is required to run the integration tests. One can be started
 
 ```sh
 $ docker run  --rm --name clickhouse -p 19000:9000 --ulimit nofile=262144:262144 clickhouse
-$ export KLICKHOUSE_TEST_ADDR=127.0.0.1:19000
-$ # export KLICKHOUSE_TEST_USER=default
-$ # export KLICKHOUSE_TEST_PASSWORD=default
-$ # export KLICKHOUSE_TEST_DATABASE=default
+$ export NATIVECLICK_TEST_ADDR=127.0.0.1:19000
+$ # export NATIVECLICK_TEST_USER=default
+$ # export NATIVECLICK_TEST_PASSWORD=default
+$ # export NATIVECLICK_TEST_DATABASE=default
 $ cargo nextest run
 ```
 
@@ -27,7 +29,7 @@ $ cargo nextest run
 
 ## Feature flags
 
-- `derive`: Enable [klickhouse_derive], providing a derive macro for the [Row] trait. Default.
+- `derive`: Enable [nativeclick_derive], providing a derive macro for the [Row] trait. Default.
 - `compression`: `lz4` compression for client/server communication. Default.
 - `serde`: Derivation of [serde::Serialize] and [serde::Deserialize] on various objects, and JSON support. Default.
 - `tls`: TLS support via [tokio-rustls](https://crates.io/crates/tokio-rustls).
@@ -37,4 +39,4 @@ $ cargo nextest run
 
 ## Credit
 
-`klickhouse_derive` was made by copy/paste/simplify of `serde_derive` to get maximal functionality and performance at lowest time-cost. In a prototype, `serde` was directly used, but this was abandoned due to lock-in of `serde`'s data model.
+`nativeclick_derive` was made by copy/paste/simplify of `serde_derive` to get maximal functionality and performance at lowest time-cost. In a prototype, `serde` was directly used, but this was abandoned due to lock-in of `serde`'s data model.

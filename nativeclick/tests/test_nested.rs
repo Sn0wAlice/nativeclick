@@ -1,4 +1,4 @@
-#[derive(klickhouse::Row, Debug, Default, PartialEq, Clone)]
+#[derive(nativeclick::Row, Debug, Default, PartialEq, Clone)]
 pub struct Nest {
     nest_string: String,
     nest_u64: Option<u64>,
@@ -6,19 +6,19 @@ pub struct Nest {
     nest_i16: i16,
 }
 
-#[derive(klickhouse::Row, Debug, Default, PartialEq, Clone)]
+#[derive(nativeclick::Row, Debug, Default, PartialEq, Clone)]
 pub struct TestSerializeNested {
-    #[klickhouse(nested)]
+    #[nativeclick(nested)]
     nest: Vec<Nest>,
 }
 
 // used to test compilation with multiple nested entries
 #[allow(unused)]
-#[derive(klickhouse::Row, Debug, Default)]
+#[derive(nativeclick::Row, Debug, Default)]
 struct TestSerializeNested2 {
-    #[klickhouse(nested)]
+    #[nativeclick(nested)]
     nest: Vec<Nest>,
-    #[klickhouse(nested)]
+    #[nativeclick(nested)]
     nest2: Vec<Nest>,
 }
 

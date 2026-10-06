@@ -3,12 +3,12 @@ use std::net::{Ipv4Addr, Ipv6Addr};
 #[cfg(feature = "bfloat16")]
 use half::bf16;
 use indexmap::IndexMap;
-use klickhouse::{
+use nativeclick::{
     Date, DateTime, DateTime64, FixedPoint32, FixedPoint64, FixedPoint128, FixedPoint256, Ipv4,
     Ipv6, Uuid, i256, u256,
 };
 
-#[derive(klickhouse::Row, Debug, Default, PartialEq, Clone)]
+#[derive(nativeclick::Row, Debug, Default, PartialEq, Clone)]
 pub struct TestType {
     d_i8: i8,
     d_i16: i16,
@@ -39,9 +39,9 @@ pub struct TestType {
     d_array: Vec<u32>,
     d_2array: Vec<Vec<u32>>,
 
-    #[klickhouse(rename = "d_nested.id")]
+    #[nativeclick(rename = "d_nested.id")]
     d_nested_id: Vec<u32>,
-    #[klickhouse(rename = "d_nested.name")]
+    #[nativeclick(rename = "d_nested.name")]
     d_nested_name: Vec<String>,
 
     d_tuple: (u32, u32),

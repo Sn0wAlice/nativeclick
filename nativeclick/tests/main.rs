@@ -12,24 +12,25 @@ pub mod test_ordering;
 pub mod test_raw_string;
 pub mod test_serialize;
 
-use klickhouse::{Client, ClientOptions};
+use nativeclick::{Client, ClientOptions};
 
 pub async fn get_client() -> Client {
     let mut options = ClientOptions::default();
 
-    if let Ok(user) = std::env::var("KLICKHOUSE_TEST_USER") {
+    if let Ok(user) = std::env::var("NATIVECLICK_TEST_USER") {
         options.username = user;
     }
 
-    if let Ok(password) = std::env::var("KLICKHOUSE_TEST_PASSWORD") {
+    if let Ok(password) = std::env::var("NATIVECLICK_TEST_PASSWORD") {
         options.password = password;
     }
 
-    if let Ok(database) = std::env::var("KLICKHOUSE_TEST_DATABASE") {
+    if let Ok(database) = std::env::var("NATIVECLICK_TEST_DATABASE") {
         options.default_database = database;
     }
 
-    let address = std::env::var("KLICKHOUSE_TEST_ADDR").unwrap_or_else(|_| "127.0.0.1:9000".into());
+    let address =
+        std::env::var("NATIVECLICK_TEST_ADDR").unwrap_or_else(|_| "127.0.0.1:9000".into());
 
     Client::connect(address, options).await.unwrap()
 }

@@ -25,7 +25,7 @@ fn to_compile_errors(errors: Vec<syn::Error>) -> proc_macro2::TokenStream {
     quote!(#(#compile_errors)*)
 }
 
-#[proc_macro_derive(Row, attributes(klickhouse))]
+#[proc_macro_derive(Row, attributes(nativeclick))]
 pub fn derive_serialize(input: TokenStream) -> TokenStream {
     let mut input = parse_macro_input!(input as DeriveInput);
     row::expand_derive_serialize(&mut input)

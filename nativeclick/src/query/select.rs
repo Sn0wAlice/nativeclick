@@ -1,4 +1,4 @@
-use crate::{KlickhouseError, ParsedQuery, Result};
+use crate::{NativeclickError, ParsedQuery, Result};
 
 #[derive(Clone)]
 pub struct SelectBuilder {
@@ -23,7 +23,7 @@ pub struct SelectBuilder {
 
 impl SelectBuilder {
     /// Creates a new [`SelectBuilder`] from the given FROM clause
-    pub fn new(from: impl TryInto<ParsedQuery, Error = KlickhouseError>) -> Self {
+    pub fn new(from: impl TryInto<ParsedQuery, Error = NativeclickError>) -> Self {
         Self {
             from: from.try_into(),
             withs: Default::default(),
@@ -46,7 +46,7 @@ impl SelectBuilder {
     }
 
     /// Adds a new CTE to the query
-    pub fn with(mut self, item: impl TryInto<ParsedQuery, Error = KlickhouseError>) -> Self {
+    pub fn with(mut self, item: impl TryInto<ParsedQuery, Error = NativeclickError>) -> Self {
         self.withs.push(item.try_into());
         self
     }
@@ -60,20 +60,23 @@ impl SelectBuilder {
 
     /// Adds some column names to a DISTINCT ON clause. This clears `distinct` calls and vice versa, so don't mix them.
     /// Names can be comma separated manually, or will be concatenated with commas.
-    pub fn distinct_on(mut self, item: impl TryInto<ParsedQuery, Error = KlickhouseError>) -> Self {
+    pub fn distinct_on(
+        mut self,
+        item: impl TryInto<ParsedQuery, Error = NativeclickError>,
+    ) -> Self {
         self.distinct = false;
         self.distinct_on.push(item.try_into());
         self
     }
 
     /// Adds an expression to the select clause. No trailing commas.
-    pub fn select(mut self, item: impl TryInto<ParsedQuery, Error = KlickhouseError>) -> Self {
+    pub fn select(mut self, item: impl TryInto<ParsedQuery, Error = NativeclickError>) -> Self {
         self.exprs.push(item.try_into());
         self
     }
 
     /// Adds many expressions to the select clause. No trailing commas.
-    pub fn select_all<I: TryInto<ParsedQuery, Error = KlickhouseError>>(
+    pub fn select_all<I: TryInto<ParsedQuery, Error = NativeclickError>>(
         mut self,
         items: impl IntoIterator<Item = I>,
     ) -> Self {
@@ -84,33 +87,33 @@ impl SelectBuilder {
     }
 
     /// Sets the SAMPLE clause. Overwrites previous SAMPLE clauses.
-    pub fn sample(mut self, item: impl TryInto<ParsedQuery, Error = KlickhouseError>) -> Self {
+    pub fn sample(mut self, item: impl TryInto<ParsedQuery, Error = NativeclickError>) -> Self {
         self.sample = Some(item.try_into());
         self
     }
 
     /// Adds an ARRAY JOIN clause. These must always be before JOIN clauses, so get their own section.
     /// Does not prefix "ARRAY JOIN" unlike other methods.
-    pub fn array_join(mut self, item: impl TryInto<ParsedQuery, Error = KlickhouseError>) -> Self {
+    pub fn array_join(mut self, item: impl TryInto<ParsedQuery, Error = NativeclickError>) -> Self {
         self.array_joins.push(item.try_into());
         self
     }
 
     /// Adds a JOIN clause.
     /// Does not prefix "JOIN" due to optional prefixes.
-    pub fn join(mut self, item: impl TryInto<ParsedQuery, Error = KlickhouseError>) -> Self {
+    pub fn join(mut self, item: impl TryInto<ParsedQuery, Error = NativeclickError>) -> Self {
         self.joins.push(item.try_into());
         self
     }
 
     /// Adds a PREWHERE clause. Concatenated automatically with AND operators.
-    pub fn prewhere(mut self, item: impl TryInto<ParsedQuery, Error = KlickhouseError>) -> Self {
+    pub fn prewhere(mut self, item: impl TryInto<ParsedQuery, Error = NativeclickError>) -> Self {
         self.prewhere.push(item.try_into());
         self
     }
 
     /// Adds multiple PREWHERE clause. Concatenated automatically with AND operators.
-    pub fn prewhere_all<I: TryInto<ParsedQuery, Error = KlickhouseError>>(
+    pub fn prewhere_all<I: TryInto<ParsedQuery, Error = NativeclickError>>(
         mut self,
         items: impl IntoIterator<Item = I>,
     ) -> Self {
@@ -121,13 +124,13 @@ impl SelectBuilder {
     }
 
     /// Adds a WHERE clause. Concatenated automatically with AND operators.
-    pub fn where_(mut self, item: impl TryInto<ParsedQuery, Error = KlickhouseError>) -> Self {
+    pub fn where_(mut self, item: impl TryInto<ParsedQuery, Error = NativeclickError>) -> Self {
         self.where_.push(item.try_into());
         self
     }
 
     /// Adds multiple WHERE clauses. Concatenated automatically with AND operators.
-    pub fn where_all<I: TryInto<ParsedQuery, Error = KlickhouseError>>(
+    pub fn where_all<I: TryInto<ParsedQuery, Error = NativeclickError>>(
         mut self,
         items: impl IntoIterator<Item = I>,
     ) -> Self {
@@ -138,13 +141,13 @@ impl SelectBuilder {
     }
 
     /// Adds a column to the GROUP BY clause. No trailing commas. Can specify multiple in one call comma separated.
-    pub fn group_by(mut self, item: impl TryInto<ParsedQuery, Error = KlickhouseError>) -> Self {
+    pub fn group_by(mut self, item: impl TryInto<ParsedQuery, Error = NativeclickError>) -> Self {
         self.group_by.push(item.try_into());
         self
     }
 
     /// Adds multiple columns to the GROUP BY clause. No trailing commas.
-    pub fn group_by_all<I: TryInto<ParsedQuery, Error = KlickhouseError>>(
+    pub fn group_by_all<I: TryInto<ParsedQuery, Error = NativeclickError>>(
         mut self,
         items: impl IntoIterator<Item = I>,
     ) -> Self {
@@ -155,13 +158,13 @@ impl SelectBuilder {
     }
 
     /// Adds a HAVING clause. Concatenated automatically with AND operators.
-    pub fn having(mut self, item: impl TryInto<ParsedQuery, Error = KlickhouseError>) -> Self {
+    pub fn having(mut self, item: impl TryInto<ParsedQuery, Error = NativeclickError>) -> Self {
         self.having.push(item.try_into());
         self
     }
 
     /// Adds multiple HAVING clauses. Concatenated automatically with AND operators.
-    pub fn having_all<I: TryInto<ParsedQuery, Error = KlickhouseError>>(
+    pub fn having_all<I: TryInto<ParsedQuery, Error = NativeclickError>>(
         mut self,
         items: impl IntoIterator<Item = I>,
     ) -> Self {
@@ -172,31 +175,31 @@ impl SelectBuilder {
     }
 
     /// Sets the ORDER BY clause. Overwrites previous ORDER BY clauses.
-    pub fn order_by(mut self, item: impl TryInto<ParsedQuery, Error = KlickhouseError>) -> Self {
+    pub fn order_by(mut self, item: impl TryInto<ParsedQuery, Error = NativeclickError>) -> Self {
         self.order_by = Some(item.try_into());
         self
     }
 
     /// Sets the LIMIT clause. Overwrites previous LIMIT clauses.
-    pub fn limit(mut self, item: impl TryInto<ParsedQuery, Error = KlickhouseError>) -> Self {
+    pub fn limit(mut self, item: impl TryInto<ParsedQuery, Error = NativeclickError>) -> Self {
         self.limit = Some(item.try_into());
         self
     }
 
     /// Sets the OFFSET clause. Overwrites previous OFFSET clauses.
-    pub fn offset(mut self, item: impl TryInto<ParsedQuery, Error = KlickhouseError>) -> Self {
+    pub fn offset(mut self, item: impl TryInto<ParsedQuery, Error = NativeclickError>) -> Self {
         self.offset = Some(item.try_into());
         self
     }
 
     /// Sets the SETTINGS clause. Overwrites previous SETTINGS clauses.
-    pub fn settings(mut self, item: impl TryInto<ParsedQuery, Error = KlickhouseError>) -> Self {
+    pub fn settings(mut self, item: impl TryInto<ParsedQuery, Error = NativeclickError>) -> Self {
         self.settings = Some(item.try_into());
         self
     }
 
     /// Sets the UNION clause. Overwrites previous UNION clauses.
-    pub fn union(mut self, item: impl TryInto<ParsedQuery, Error = KlickhouseError>) -> Self {
+    pub fn union(mut self, item: impl TryInto<ParsedQuery, Error = NativeclickError>) -> Self {
         self.union = Some(item.try_into());
         self
     }
@@ -208,7 +211,7 @@ impl SelectBuilder {
 }
 
 impl TryInto<ParsedQuery> for SelectBuilder {
-    type Error = KlickhouseError;
+    type Error = NativeclickError;
 
     fn try_into(mut self) -> Result<ParsedQuery> {
         let mut out = String::new();

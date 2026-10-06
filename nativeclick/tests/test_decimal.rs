@@ -1,7 +1,7 @@
 #![cfg(feature = "rust_decimal")]
 use rust_decimal::Decimal;
 
-#[derive(klickhouse::Row, Debug, Default, PartialEq, Clone)]
+#[derive(nativeclick::Row, Debug, Default, PartialEq, Clone)]
 pub struct TestType {
     d_d128: Decimal,
 }

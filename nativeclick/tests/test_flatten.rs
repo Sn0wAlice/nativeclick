@@ -1,14 +1,14 @@
-use klickhouse::Row;
+use nativeclick::Row;
 
-#[derive(klickhouse::Row, Debug, Default, PartialEq, Clone)]
+#[derive(nativeclick::Row, Debug, Default, PartialEq, Clone)]
 pub struct TestRow {
     field: u32,
-    #[klickhouse(flatten)]
+    #[nativeclick(flatten)]
     subrow: SubRow,
     field2: u32,
 }
 
-#[derive(klickhouse::Row, Debug, Default, PartialEq, Clone)]
+#[derive(nativeclick::Row, Debug, Default, PartialEq, Clone)]
 pub struct SubRow {
     a: u32,
     b: f32,

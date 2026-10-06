@@ -48,8 +48,8 @@ fn build_generics(cont: &Container) -> syn::Generics {
             &generics,
             needs_serialize_bound,
             &[
-                &parse_quote!(::klickhouse::FromSql),
-                &parse_quote!(::klickhouse::ToSql),
+                &parse_quote!(::nativeclick::FromSql),
+                &parse_quote!(::nativeclick::ToSql),
             ],
         ),
     }
@@ -103,7 +103,7 @@ pub fn expand_derive_serialize(
     } else {
         Stmts(serialize_length_body(&cont, &params))
     };
-    let const_column_count_fn = format_ident!("__{ident}_column_count_klickhouse");
+    let const_column_count_fn = format_ident!("__{ident}_column_count_nativeclick");
 
     let impl_block = quote! {
         #[doc(hidden)]
@@ -113,23 +113,23 @@ pub fn expand_derive_serialize(
             #serialize_length_body
         }
 
-        use ::klickhouse::{ToSql as _, FromSql as _};
+        use ::nativeclick::{ToSql as _, FromSql as _};
         #[automatically_derived]
         #[allow(clippy)]
         #[allow(non_snake_case)]
         #[allow(clippy::absurd_extreme_comparisons)]
-        impl #impl_generics ::klickhouse::Row for #ident #ty_generics #where_clause {
+        impl #impl_generics ::nativeclick::Row for #ident #ty_generics #where_clause {
             const COLUMN_COUNT: ::std::option::Option<usize> = #const_column_count_fn();
 
             fn column_names() -> Option<Vec<::std::borrow::Cow<'static, str>>> {
                 #column_names_body
             }
 
-            fn deserialize_row(map: Vec<(&str, &::klickhouse::Type, ::klickhouse::Value)>) -> ::klickhouse::Result<Self> {
+            fn deserialize_row(map: Vec<(&str, &::nativeclick::Type, ::nativeclick::Value)>) -> ::nativeclick::Result<Self> {
                 #deserialize_body
             }
 
-            fn serialize_row(self, type_hints: &::klickhouse::IndexMap<String, ::klickhouse::Type>) -> ::klickhouse::Result<Vec<(::std::borrow::Cow<'static, str>, ::klickhouse::Value)>> {
+            fn serialize_row(self, type_hints: &::nativeclick::IndexMap<String, ::nativeclick::Type>) -> ::nativeclick::Result<Vec<(::std::borrow::Cow<'static, str>, ::nativeclick::Value)>> {
                 #serialize_body
             }
         }
@@ -193,7 +193,7 @@ fn serialize_length_body(cont: &Container, _params: &Parameters) -> Fragment {
             .filter(|&field| !field.attrs.skip_serializing() && field.attrs.nested())
         {
             let field_ty = unwrap_vec_type(field.ty).expect("invalid non-Vec nested type");
-            total = quote! { match <#field_ty as ::klickhouse::Row>::COLUMN_COUNT { Some(x) => (#total) + x, None => return None, } };
+            total = quote! { match <#field_ty as ::nativeclick::Row>::COLUMN_COUNT { Some(x) => (#total) + x, None => return None, } };
         }
         Fragment::Expr(quote! { Some(#total) })
     }
@@ -209,7 +209,7 @@ fn column_names_body(cont: &Container, _params: &Parameters) -> Fragment {
                 let ty = field.ty;
                 if field.attrs.nested() {
                     let field_ty = unwrap_vec_type(field.ty).expect("invalid non-Vec nested type");
-                    quote! { out.extend(<#field_ty as ::klickhouse::Row>::column_names()?.into_iter().map(|x| ::std::borrow::Cow::Owned(format!("{}.{}", #name, x)))); }
+                    quote! { out.extend(<#field_ty as ::nativeclick::Row>::column_names()?.into_iter().map(|x| ::std::borrow::Cow::Owned(format!("{}.{}", #name, x)))); }
                 } else if field.attrs.flatten(){
                     quote! { out.extend(#ty::column_names()?); }
                 } else {
@@ -227,7 +227,7 @@ fn column_names_body(cont: &Container, _params: &Parameters) -> Fragment {
 fn serialize_into(params: &Parameters, type_into: &syn::Type) -> Fragment {
     let self_var = &params.self_var;
     quote_block! {
-        ::klickhouse::Row::serialize_row(
+        ::nativeclick::Row::serialize_row(
             ::std::convert::Into::<#type_into>::into(#self_var),
             &type_hints
         )
@@ -277,13 +277,13 @@ fn serialize_struct_visitor(fields: &[Field], params: &Parameters) -> Vec<TokenS
                         let field_ty = unwrap_vec_type(field.ty).expect("invalid non-Vec nested type");
                         quote! {
                             {
-                                let inner_length = <#field_ty as ::klickhouse::Row>::COLUMN_COUNT.expect("nested structure must have known length");
-                                let mut outputs: ::std::vec::Vec<(::std::option::Option<::std::borrow::Cow<str>>, ::std::vec::Vec<::klickhouse::Value>)> = ::std::vec::Vec::with_capacity(inner_length);
+                                let inner_length = <#field_ty as ::nativeclick::Row>::COLUMN_COUNT.expect("nested structure must have known length");
+                                let mut outputs: ::std::vec::Vec<(::std::option::Option<::std::borrow::Cow<str>>, ::std::vec::Vec<::nativeclick::Value>)> = ::std::vec::Vec::with_capacity(inner_length);
                                 for _ in 0..inner_length {
                                     outputs.push((None, ::std::vec::Vec::new()));
                                 }
                                 for row in #field_expr.into_iter() {
-                                    let columns = <#field_ty as ::klickhouse::Row>::serialize_row(row, type_hints)?;
+                                    let columns = <#field_ty as ::nativeclick::Row>::serialize_row(row, type_hints)?;
                                     assert_eq!(columns.len(), inner_length);
                                     for (i, (name, value)) in columns.into_iter().enumerate() {
                                         if outputs[i].0.is_none()  {
@@ -298,12 +298,12 @@ fn serialize_struct_visitor(fields: &[Field], params: &Parameters) -> Vec<TokenS
                                         Some(name) => name,
                                         None => {
                                             if column_names.is_none() {
-                                                column_names = Some(<#field_ty as ::klickhouse::Row>::column_names().expect("column_names required for empty nested serialization"));
+                                                column_names = Some(<#field_ty as ::nativeclick::Row>::column_names().expect("column_names required for empty nested serialization"));
                                             }
                                             format!("{}.{}", #key_expr, column_names.as_ref().unwrap().get(i).expect("missing column_name for nested struct")).into()
                                         }
                                     };
-                                    out.push((name, ::klickhouse::Value::Array(values)));
+                                    out.push((name, ::nativeclick::Value::Array(values)));
                                 }
                             }
                         }
@@ -315,7 +315,7 @@ fn serialize_struct_visitor(fields: &[Field], params: &Parameters) -> Vec<TokenS
                     }
                     else {
                         quote! {
-                            out.push((::std::borrow::Cow::Borrowed(#key_expr), <#field_ty as ::klickhouse::ToSql>::to_sql(#field_expr, type_hints.get(#key_expr))?));
+                            out.push((::std::borrow::Cow::Borrowed(#key_expr), <#field_ty as ::nativeclick::ToSql>::to_sql(#field_expr, type_hints.get(#key_expr))?));
                         }
                     }
                 },
@@ -345,16 +345,16 @@ fn deserialize_body(cont: &Container, params: &Parameters) -> Fragment {
 
 fn deserialize_from(type_from: &syn::Type) -> Fragment {
     quote_block! {
-        ::klickhouse::Result::map(
-            <#type_from as ::klickhouse::Row>::deserialize_row(map),
+        ::nativeclick::Result::map(
+            <#type_from as ::nativeclick::Row>::deserialize_row(map),
             ::std::convert::From::from)
     }
 }
 
 fn deserialize_try_from(type_try_from: &syn::Type) -> Fragment {
     quote_block! {
-        ::klickhouse::Result::and_then(
-            <#type_try_from as ::klickhouse::Row>::deserialize_row(map),
+        ::nativeclick::Result::and_then(
+            <#type_try_from as ::nativeclick::Row>::deserialize_row(map),
             |v| ::std::convert::TryFrom::try_from(v).map_err(::std::convert::Into::into))
     }
 }
@@ -432,32 +432,32 @@ fn deserialize_map(
                 current_index = quote! { #current_index + #size_field };
 
                 nested_temp_decls.push(quote_spanned! { span=>
-                    let #size_field = <#field_ty as ::klickhouse::Row>::COLUMN_COUNT.expect("nested structure must have known length");
-                    let mut #deser_name_ext: Vec<(&str, &::klickhouse::Type)> = Vec::with_capacity(#size_field);
-                    let mut #deser_name_ext_iter: Vec<::std::vec::IntoIter<::klickhouse::Value>> = Vec::with_capacity(#size_field);
+                    let #size_field = <#field_ty as ::nativeclick::Row>::COLUMN_COUNT.expect("nested structure must have known length");
+                    let mut #deser_name_ext: Vec<(&str, &::nativeclick::Type)> = Vec::with_capacity(#size_field);
+                    let mut #deser_name_ext_iter: Vec<::std::vec::IntoIter<::nativeclick::Value>> = Vec::with_capacity(#size_field);
                     let mut #deser_name_ext_len: usize = 0;
                 });
                 name_match_arms.push(quote_spanned! { span=>
                     full_name if full_name.starts_with(#deser_name_dotted) => {
-                        let values = _value.unarray().ok_or_else(|| ::klickhouse::KlickhouseError::UnexpectedTypeWithColumn(::std::borrow::Cow::Owned(full_name.to_string()), _type_.clone()))?;
+                        let values = _value.unarray().ok_or_else(|| ::nativeclick::NativeclickError::UnexpectedTypeWithColumn(::std::borrow::Cow::Owned(full_name.to_string()), _type_.clone()))?;
                         if #deser_name_ext.is_empty() {
                             #deser_name_ext_len = values.len();
                         } else if #deser_name_ext_len != values.len() {
-                            return ::klickhouse::Result::Err(::klickhouse::KlickhouseError::DeserializeError(format!("invalid length for nested columns, mismatches previous column {}: {} != {}", _name, #deser_name_ext_len, values.len())));
+                            return ::nativeclick::Result::Err(::nativeclick::NativeclickError::DeserializeError(format!("invalid length for nested columns, mismatches previous column {}: {} != {}", _name, #deser_name_ext_len, values.len())));
                         }
-                        #deser_name_ext.push((full_name.strip_prefix(#deser_name_dotted).unwrap(), _type_.unarray().map(|x| x.strip_low_cardinality()).ok_or_else(|| ::klickhouse::KlickhouseError::UnexpectedTypeWithColumn(::std::borrow::Cow::Owned(full_name.to_string()), _type_.clone()))?));
+                        #deser_name_ext.push((full_name.strip_prefix(#deser_name_dotted).unwrap(), _type_.unarray().map(|x| x.strip_low_cardinality()).ok_or_else(|| ::nativeclick::NativeclickError::UnexpectedTypeWithColumn(::std::borrow::Cow::Owned(full_name.to_string()), _type_.clone()))?));
                         #deser_name_ext_iter.push(values.into_iter());
                     }
                 });
                 index_match_arms.push(quote_spanned! { span=>
                     x if x >= (#local_index) && x < (#current_index) => {
-                        let values = _value.unarray().ok_or_else(|| ::klickhouse::KlickhouseError::UnexpectedTypeWithColumn(::std::borrow::Cow::Owned(_name.to_string()), _type_.clone()))?;
+                        let values = _value.unarray().ok_or_else(|| ::nativeclick::NativeclickError::UnexpectedTypeWithColumn(::std::borrow::Cow::Owned(_name.to_string()), _type_.clone()))?;
                         if #deser_name_ext.is_empty() {
                             #deser_name_ext_len = values.len();
                         } else if #deser_name_ext_len != values.len() {
-                            return ::klickhouse::Result::Err(::klickhouse::KlickhouseError::DeserializeError(format!("invalid length for nested columns, mismatches previous column {}: {} != {}", _name, #deser_name_ext_len, values.len())));
+                            return ::nativeclick::Result::Err(::nativeclick::NativeclickError::DeserializeError(format!("invalid length for nested columns, mismatches previous column {}: {} != {}", _name, #deser_name_ext_len, values.len())));
                         }
-                        #deser_name_ext.push((_name, _type_.unarray().map(|x| x.strip_low_cardinality()).ok_or_else(|| ::klickhouse::KlickhouseError::UnexpectedTypeWithColumn(::std::borrow::Cow::Owned(_name.to_string()), _type_.clone()))?));
+                        #deser_name_ext.push((_name, _type_.unarray().map(|x| x.strip_low_cardinality()).ok_or_else(|| ::nativeclick::NativeclickError::UnexpectedTypeWithColumn(::std::borrow::Cow::Owned(_name.to_string()), _type_.clone()))?));
                         #deser_name_ext_iter.push(values.into_iter());
                     }
                 });
@@ -467,7 +467,7 @@ fn deserialize_map(
                         'outer: loop {
                             let mut temp = ::std::vec::Vec::with_capacity(#size_field);
                             for (name, type_) in #deser_name_ext.iter() {
-                                temp.push((*name, *type_, ::klickhouse::Value::Null));
+                                temp.push((*name, *type_, ::nativeclick::Value::Null));
                             }
                             for (i, value) in #deser_name_ext_iter.iter_mut().enumerate() {
                                 match value.next() {
@@ -475,7 +475,7 @@ fn deserialize_map(
                                     Some(x) => temp[i].2 = x,
                                 }
                             }
-                            #name.as_mut().unwrap().push(<#field_ty as ::klickhouse::Row>::deserialize_row(temp)?);
+                            #name.as_mut().unwrap().push(<#field_ty as ::nativeclick::Row>::deserialize_row(temp)?);
                         }
                     }
                 });
@@ -488,7 +488,7 @@ fn deserialize_map(
                 None => {
                     let field_ty = field.ty;
                     let span = field.original.span();
-                    quote_spanned!(span=> <#field_ty as ::klickhouse::FromSql>::from_sql(_type_.strip_low_cardinality(), _value).map_err(|e| e.with_column_name(#deser_name))?)
+                    quote_spanned!(span=> <#field_ty as ::nativeclick::FromSql>::from_sql(_type_.strip_low_cardinality(), _value).map_err(|e| e.with_column_name(#deser_name))?)
                 }
                 Some(path) => {
                     let span = field.original.span();
@@ -498,7 +498,7 @@ fn deserialize_map(
             name_match_arms.push(quote_spanned! { span=>
                 #deser_name => {
                     if ::std::option::Option::is_some(&#name) {
-                        return ::klickhouse::Result::Err(::klickhouse::KlickhouseError::DuplicateField(#deser_name));
+                        return ::nativeclick::Result::Err(::nativeclick::NativeclickError::DuplicateField(#deser_name));
                     }
                     #name = ::std::option::Option::Some(#visit);
                 }
@@ -506,7 +506,7 @@ fn deserialize_map(
             index_match_arms.push(quote_spanned! { span=>
                 x if x == (#local_index) => {
                         if ::std::option::Option::is_some(&#name) {
-                        return ::klickhouse::Result::Err(::klickhouse::KlickhouseError::DuplicateField(#deser_name));
+                        return ::nativeclick::Result::Err(::nativeclick::NativeclickError::DuplicateField(#deser_name));
                     }
                     #name = ::std::option::Option::Some(#visit);
                 }
@@ -517,7 +517,7 @@ fn deserialize_map(
     let ignored_arm = if cattrs.deny_unknown_fields() {
         quote! {
             _ => {
-                return ::klickhouse::Result::Err(::klickhouse::KlickhouseError::UnknownField(_name));
+                return ::nativeclick::Result::Err(::nativeclick::NativeclickError::UnknownField(_name));
             }
         }
     } else {
@@ -541,7 +541,7 @@ fn deserialize_map(
     // Extract values for flattened fields, before we move `map`.
     let mut pull_flatten: Vec<TokenStream> = vec![quote! {
         let mut map = map;
-        let mut map_flattened_fields = std::collections::HashMap::<&str, (&::klickhouse::Type, ::klickhouse::Value)>::default();
+        let mut map_flattened_fields = std::collections::HashMap::<&str, (&::nativeclick::Type, ::nativeclick::Value)>::default();
     }];
     for (f, _) in fields_names.iter() {
         if !f.attrs.flatten() {
@@ -552,13 +552,13 @@ fn deserialize_map(
         let missing_names_error =
             format!("Flattened field {name} should provide Row::column_names");
         // TODO: To give the actual field, we would need to change the type of
-        //       KlickhouseError::MissingField from &'static str to Cow.
+        //       NativeclickError::MissingField from &'static str to Cow.
         let missing_col_error = format!("Flattened field {name} has missing column");
         pull_flatten.push(quote! {
             for c in #ty::column_names()
-                    .ok_or_else(|| ::klickhouse::KlickhouseError::DeserializeError(#missing_names_error.into()))? {
+                    .ok_or_else(|| ::nativeclick::NativeclickError::DeserializeError(#missing_names_error.into()))? {
                 let idx = map.iter().enumerate().find(|(_, (c2,_,_))| c2 == &c)
-                                    .ok_or(::klickhouse::KlickhouseError::MissingField(#missing_col_error))?.0;
+                                    .ok_or(::nativeclick::NativeclickError::MissingField(#missing_col_error))?.0;
                 let (col, ty, val) = map.swap_remove(idx);
                 map_flattened_fields.insert(col, (ty, val));
             }
@@ -609,7 +609,7 @@ fn deserialize_map(
                     let (c, (ty, val)) = map_flattened_fields.remove_entry(c).unwrap();
                     map2.push((c, ty, val));
                 }
-                klickhouse::Row::deserialize_row(map2)? }
+                nativeclick::Row::deserialize_row(map2)? }
             }
         } else {
             quote!(#member: #name)
@@ -646,7 +646,7 @@ fn deserialize_map(
 
         #(#extract_values)*
 
-        ::klickhouse::Result::Ok(#result)
+        ::nativeclick::Result::Ok(#result)
     }
 }
 
@@ -673,8 +673,8 @@ fn expr_is_missing(field: &Field, cattrs: &attr::Container) -> Fragment {
 
     let name = field.attrs.name().name();
     let span = field.original.span();
-    let func = quote_spanned!(span=> ::klickhouse::KlickhouseError::MissingField);
+    let func = quote_spanned!(span=> ::nativeclick::NativeclickError::MissingField);
     quote_expr! {
-        return ::klickhouse::Result::Err(#func(#name))
+        return ::nativeclick::Result::Err(#func(#name))
     }
 }

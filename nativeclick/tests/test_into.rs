@@ -1,5 +1,5 @@
-#[derive(klickhouse::Row, Debug, Default, PartialEq, Clone)]
-#[klickhouse(into = "TestType2")]
+#[derive(nativeclick::Row, Debug, Default, PartialEq, Clone)]
+#[nativeclick(into = "TestType2")]
 pub struct TestType1 {
     d_i8: i8,
 }
@@ -12,7 +12,7 @@ impl From<TestType1> for TestType2 {
     }
 }
 
-#[derive(klickhouse::Row, Debug, Default, PartialEq, Clone)]
+#[derive(nativeclick::Row, Debug, Default, PartialEq, Clone)]
 pub struct TestType2 {
     d_i16: i16,
 }

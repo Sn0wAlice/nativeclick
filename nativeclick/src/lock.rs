@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use log::error;
 
-use crate::{Client, KlickhouseError};
+use crate::{Client, NativeclickError};
 
 /// A hack implementation of a global lock for things like migrations
 #[derive(Clone)]
@@ -33,7 +33,7 @@ impl ClickhouseLock {
     }
 
     /// Attempts to lock this table a single time.
-    pub async fn try_lock(&self) -> Result<Option<ClickhouseLockHandle<'_>>, KlickhouseError> {
+    pub async fn try_lock(&self) -> Result<Option<ClickhouseLockHandle<'_>>, NativeclickError> {
         let query = format!(
             "CREATE TABLE _lock_{}{} (i Int64)ENGINE=Null",
             self.name, self.cluster_str
@@ -55,7 +55,7 @@ impl ClickhouseLock {
     }
 
     /// Attempts to lock this table.
-    pub async fn lock(&self) -> Result<ClickhouseLockHandle<'_>, KlickhouseError> {
+    pub async fn lock(&self) -> Result<ClickhouseLockHandle<'_>, NativeclickError> {
         let query = format!(
             "CREATE TABLE _lock_{}{} (i Int64)ENGINE=Null",
             self.name, self.cluster_str
@@ -79,7 +79,7 @@ impl ClickhouseLock {
     }
 
     /// Resets this lock, forcefully unlocking it
-    pub async fn reset(&self) -> Result<(), KlickhouseError> {
+    pub async fn reset(&self) -> Result<(), NativeclickError> {
         self.client
             .execute(format!(
                 "DROP TABLE IF EXISTS _lock_{}{} SYNC",
@@ -91,7 +91,7 @@ impl ClickhouseLock {
 
 impl ClickhouseLockHandle<'_> {
     /// Unlocks this handle (without spawning a tokio task)
-    pub async fn unlock(mut self) -> Result<(), KlickhouseError> {
+    pub async fn unlock(mut self) -> Result<(), NativeclickError> {
         self.lock.take().unwrap().reset().await
     }
 }

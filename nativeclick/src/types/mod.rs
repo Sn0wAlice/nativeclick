@@ -12,7 +12,7 @@ mod serialize;
 mod tests;
 
 use crate::{
-    Date, DateTime, DynDateTime64, Ipv4, Ipv6, KlickhouseError, Result, default_bf16_value, i256,
+    Date, DateTime, DynDateTime64, Ipv4, Ipv6, NativeclickError, Result, default_bf16_value, i256,
     io::{ClickhouseRead, ClickhouseWrite},
     is_bfloat16_enabled,
     protocol::MAX_STRING_SIZE,
@@ -209,7 +209,7 @@ fn eat_identifier(input: &str) -> (&str, &str) {
 
 fn parse_args(input: &str) -> Result<Vec<&str>> {
     if !input.starts_with('(') || !input.ends_with(')') {
-        return Err(KlickhouseError::TypeParseError(
+        return Err(NativeclickError::TypeParseError(
             "malformed arguments to type".to_string(),
         ));
     }
@@ -236,7 +236,7 @@ fn parse_args(input: &str) -> Result<Vec<&str>> {
         }
     }
     if in_parens != 0 {
-        return Err(KlickhouseError::TypeParseError(
+        return Err(NativeclickError::TypeParseError(
             "mismatched parenthesis".to_string(),
         ));
     }
@@ -248,12 +248,12 @@ fn parse_args(input: &str) -> Result<Vec<&str>> {
 
 fn parse_scale(from: &str) -> Result<usize> {
     from.parse()
-        .map_err(|_| KlickhouseError::TypeParseError("couldn't parse scale".to_string()))
+        .map_err(|_| NativeclickError::TypeParseError("couldn't parse scale".to_string()))
 }
 
 fn parse_precision(from: &str) -> Result<usize> {
     from.parse()
-        .map_err(|_| KlickhouseError::TypeParseError("couldn't parse precision".to_string()))
+        .map_err(|_| NativeclickError::TypeParseError("couldn't parse precision".to_string()))
 }
 
 fn parse_enum_variant<V: FromStr>(from: &str) -> Result<(String, V)> {
@@ -261,11 +261,11 @@ fn parse_enum_variant<V: FromStr>(from: &str) -> Result<(String, V)> {
         .split_once('=')
         .map(|splitted| (splitted.0.trim(), splitted.1.trim()))
         .ok_or_else(|| {
-            KlickhouseError::TypeParseError(format!("enum variant missing '=': {from}"))
+            NativeclickError::TypeParseError(format!("enum variant missing '=': {from}"))
         })?;
 
     if !variant.starts_with("'") || !variant.ends_with("'") {
-        return Err(KlickhouseError::TypeParseError(format!(
+        return Err(NativeclickError::TypeParseError(format!(
             "enum variant name not contained in single quotes ('name'): {variant} {from}"
         )));
     }
@@ -273,7 +273,7 @@ fn parse_enum_variant<V: FromStr>(from: &str) -> Result<(String, V)> {
     let variant = variant[1..variant.len() - 1].trim();
 
     let value = value.parse().map_err(|_| {
-        KlickhouseError::TypeParseError(format!(
+        NativeclickError::TypeParseError(format!(
             "failed to parse enum variant value: {value} {from}"
         ))
     })?;
@@ -282,12 +282,12 @@ fn parse_enum_variant<V: FromStr>(from: &str) -> Result<(String, V)> {
 }
 
 impl FromStr for Type {
-    type Err = KlickhouseError;
+    type Err = NativeclickError;
 
     fn from_str(s: &str) -> Result<Self> {
         let (ident, following) = eat_identifier(s);
         if ident.is_empty() {
-            return Err(KlickhouseError::TypeParseError(format!(
+            return Err(NativeclickError::TypeParseError(format!(
                 "invalid empty identifier for type: '{s}'"
             )));
         }
@@ -297,7 +297,7 @@ impl FromStr for Type {
             return Ok(match ident {
                 "Decimal" => {
                     if args.len() != 2 {
-                        return Err(KlickhouseError::TypeParseError(format!(
+                        return Err(NativeclickError::TypeParseError(format!(
                             "bad arg count for Decimal, expected 2 and got {}",
                             args.len()
                         )));
@@ -313,14 +313,14 @@ impl FromStr for Type {
                     } else if p <= 76 {
                         Type::Decimal256(s)
                     } else {
-                        return Err(KlickhouseError::TypeParseError(
+                        return Err(NativeclickError::TypeParseError(
                             "bad decimal spec, cannot exceed 76 precision".to_string(),
                         ));
                     }
                 }
                 "Decimal32" => {
                     if args.len() != 1 {
-                        return Err(KlickhouseError::TypeParseError(format!(
+                        return Err(NativeclickError::TypeParseError(format!(
                             "bad arg count for Decimal32, expected 1 and got {}",
                             args.len()
                         )));
@@ -329,7 +329,7 @@ impl FromStr for Type {
                 }
                 "Decimal64" => {
                     if args.len() != 1 {
-                        return Err(KlickhouseError::TypeParseError(format!(
+                        return Err(NativeclickError::TypeParseError(format!(
                             "bad arg count for Decimal64, expected 1 and got {}",
                             args.len()
                         )));
@@ -338,7 +338,7 @@ impl FromStr for Type {
                 }
                 "Decimal128" => {
                     if args.len() != 1 {
-                        return Err(KlickhouseError::TypeParseError(format!(
+                        return Err(NativeclickError::TypeParseError(format!(
                             "bad arg count for Decimal128, expected 1 and got {}",
                             args.len()
                         )));
@@ -347,7 +347,7 @@ impl FromStr for Type {
                 }
                 "Decimal256" => {
                     if args.len() != 1 {
-                        return Err(KlickhouseError::TypeParseError(format!(
+                        return Err(NativeclickError::TypeParseError(format!(
                             "bad arg count for Decimal256, expected 1 and got {}",
                             args.len()
                         )));
@@ -356,7 +356,7 @@ impl FromStr for Type {
                 }
                 "FixedString" => {
                     if args.len() != 1 {
-                        return Err(KlickhouseError::TypeParseError(format!(
+                        return Err(NativeclickError::TypeParseError(format!(
                             "bad arg count for FixedString, expected 1 and got {}",
                             args.len()
                         )));
@@ -365,19 +365,19 @@ impl FromStr for Type {
                 }
                 "DateTime" => {
                     if args.len() != 1 {
-                        return Err(KlickhouseError::TypeParseError(format!(
+                        return Err(NativeclickError::TypeParseError(format!(
                             "bad arg count for DateTime, expected 1 and got {}",
                             args.len()
                         )));
                     }
                     if !args[0].starts_with('\'') || !args[0].ends_with('\'') {
-                        return Err(KlickhouseError::TypeParseError(format!(
+                        return Err(NativeclickError::TypeParseError(format!(
                             "failed to parse timezone for DateTime: '{}'",
                             args[0]
                         )));
                     }
                     Type::DateTime(args[0][1..args[0].len() - 1].parse().map_err(|e| {
-                        KlickhouseError::TypeParseError(format!(
+                        NativeclickError::TypeParseError(format!(
                             "failed to parse timezone for DateTime: '{}': {}",
                             args[0], e
                         ))
@@ -386,7 +386,7 @@ impl FromStr for Type {
                 "DateTime64" => {
                     if args.len() == 2 {
                         if !args[1].starts_with('\'') || !args[1].ends_with('\'') {
-                            return Err(KlickhouseError::TypeParseError(format!(
+                            return Err(NativeclickError::TypeParseError(format!(
                                 "failed to parse timezone for DateTime64: '{}'",
                                 args[0]
                             )));
@@ -394,7 +394,7 @@ impl FromStr for Type {
                         Type::DateTime64(
                             parse_precision(args[0])?,
                             args[1][1..args[1].len() - 1].parse().map_err(|e| {
-                                KlickhouseError::TypeParseError(format!(
+                                NativeclickError::TypeParseError(format!(
                                     "failed to parse timezone for DateTime64: '{}': {}",
                                     args[0], e
                                 ))
@@ -403,7 +403,7 @@ impl FromStr for Type {
                     } else if args.len() == 1 {
                         Type::DateTime64(parse_precision(args[0])?, chrono_tz::UTC)
                     } else {
-                        return Err(KlickhouseError::TypeParseError(format!(
+                        return Err(NativeclickError::TypeParseError(format!(
                             "bad arg count for DateTime64, expected 1 or 2 and got {}",
                             args.len()
                         )));
@@ -427,7 +427,7 @@ impl FromStr for Type {
                 }
                 "LowCardinality" => {
                     if args.len() != 1 {
-                        return Err(KlickhouseError::TypeParseError(format!(
+                        return Err(NativeclickError::TypeParseError(format!(
                             "bad arg count for LowCardinality, expected 1 and got {}",
                             args.len()
                         )));
@@ -436,7 +436,7 @@ impl FromStr for Type {
                 }
                 "Array" => {
                     if args.len() != 1 {
-                        return Err(KlickhouseError::TypeParseError(format!(
+                        return Err(NativeclickError::TypeParseError(format!(
                             "bad arg count for Array, expected 1 and got {}",
                             args.len()
                         )));
@@ -444,7 +444,7 @@ impl FromStr for Type {
                     Type::Array(Box::new(Type::from_str(args[0])?))
                 }
                 "Nested" => {
-                    return Err(KlickhouseError::TypeParseError(
+                    return Err(NativeclickError::TypeParseError(
                         "unsupported Nested type".to_string(),
                     ));
                 }
@@ -457,7 +457,7 @@ impl FromStr for Type {
                 }
                 "Nullable" => {
                     if args.len() != 1 {
-                        return Err(KlickhouseError::TypeParseError(format!(
+                        return Err(NativeclickError::TypeParseError(format!(
                             "bad arg count for Nullable, expected 1 and got {}",
                             args.len()
                         )));
@@ -466,7 +466,7 @@ impl FromStr for Type {
                 }
                 "Map" => {
                     if args.len() != 2 {
-                        return Err(KlickhouseError::TypeParseError(format!(
+                        return Err(NativeclickError::TypeParseError(format!(
                             "bad arg count for Map, expected 2 and got {}",
                             args.len()
                         )));
@@ -477,7 +477,7 @@ impl FromStr for Type {
                     )
                 }
                 _ => {
-                    return Err(KlickhouseError::TypeParseError(format!(
+                    return Err(NativeclickError::TypeParseError(format!(
                         "invalid type with arguments: '{ident}'"
                     )));
                 }
@@ -502,7 +502,7 @@ impl FromStr for Type {
                 if is_bfloat16_enabled() {
                     Type::BFloat16
                 } else {
-                    return Err(KlickhouseError::TypeParseError("BFloat16 type is not supported. Enable the 'bfloat16' feature to use this type.".to_string()));
+                    return Err(NativeclickError::TypeParseError("BFloat16 type is not supported. Enable the 'bfloat16' feature to use this type.".to_string()));
                 }
             }
             "String" => Type::String,
@@ -516,7 +516,7 @@ impl FromStr for Type {
             "Polygon" => Type::Polygon,
             "MultiPolygon" => Type::MultiPolygon,
             _ => {
-                return Err(KlickhouseError::TypeParseError(format!(
+                return Err(NativeclickError::TypeParseError(format!(
                     "invalid type name: '{ident}'"
                 )));
             }
@@ -674,7 +674,7 @@ impl Type {
 
         async move {
             if rows > MAX_STRING_SIZE {
-                return Err(KlickhouseError::ProtocolError(format!(
+                return Err(NativeclickError::ProtocolError(format!(
                     "deserialize response size too large. {rows} > {MAX_STRING_SIZE}"
                 )));
             }
@@ -874,7 +874,7 @@ impl Type {
         match self {
             Type::Decimal32(precision) => {
                 if *precision == 0 || *precision > 9 {
-                    return Err(KlickhouseError::TypeParseError(format!(
+                    return Err(NativeclickError::TypeParseError(format!(
                         "precision out of bounds for Decimal32({}) must be in range (1..=9)",
                         *precision
                     )));
@@ -882,7 +882,7 @@ impl Type {
             }
             Type::DateTime64(precision, _) | Type::Decimal64(precision) => {
                 if *precision == 0 || *precision > 18 {
-                    return Err(KlickhouseError::TypeParseError(format!(
+                    return Err(NativeclickError::TypeParseError(format!(
                         "precision out of bounds for Decimal64/DateTime64({}) must be in range (1..=18)",
                         *precision
                     )));
@@ -890,7 +890,7 @@ impl Type {
             }
             Type::Decimal128(precision) => {
                 if *precision == 0 || *precision > 38 {
-                    return Err(KlickhouseError::TypeParseError(format!(
+                    return Err(NativeclickError::TypeParseError(format!(
                         "precision out of bounds for Decimal128({}) must be in range (1..=38)",
                         *precision
                     )));
@@ -898,7 +898,7 @@ impl Type {
             }
             Type::Decimal256(precision) => {
                 if *precision == 0 || *precision > 76 {
-                    return Err(KlickhouseError::TypeParseError(format!(
+                    return Err(NativeclickError::TypeParseError(format!(
                         "precision out of bounds for Decimal256({}) must be in range (1..=76)",
                         *precision
                     )));
@@ -924,7 +924,7 @@ impl Type {
                 | Type::UInt128
                 | Type::UInt256 => inner.validate()?,
                 _ => {
-                    return Err(KlickhouseError::TypeParseError(format!(
+                    return Err(NativeclickError::TypeParseError(format!(
                         "illegal type '{inner:?}' in LowCardinality, not allowed"
                     )));
                 }
@@ -946,7 +946,7 @@ impl Type {
                     | Type::Tuple(_)
                     | Type::Nullable(_) => {
                         /*  | Type::Nested(_) */
-                        return Err(KlickhouseError::TypeParseError(format!(
+                        return Err(NativeclickError::TypeParseError(format!(
                             "nullable cannot contain composite type '{inner:?}'"
                         )));
                     }
@@ -978,7 +978,7 @@ impl Type {
                         | Type::Enum8(_)
                         | Type::Enum16(_)
                 ) {
-                    return Err(KlickhouseError::TypeParseError("key in map must be String, Integer, LowCardinality, FixedString, UUID, Date, DateTime, Date32, Enum".to_string()));
+                    return Err(NativeclickError::TypeParseError("key in map must be String, Integer, LowCardinality, FixedString, UUID, Date, DateTime, Date32, Enum".to_string()));
                 }
                 key.validate()?;
                 value.validate()?;
@@ -991,7 +991,7 @@ impl Type {
     pub(crate) fn validate_value(&self, value: &Value) -> Result<()> {
         self.validate()?;
         if !self.inner_validate_value(value) {
-            return Err(KlickhouseError::TypeParseError(format!(
+            return Err(NativeclickError::TypeParseError(format!(
                 "could not assign value '{value:?}' to type '{self:?}'"
             )));
         }

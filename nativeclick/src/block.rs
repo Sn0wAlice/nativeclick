@@ -5,7 +5,7 @@ use indexmap::IndexMap;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 use crate::{
-    KlickhouseError,
+    NativeclickError,
     io::{ClickhouseRead, ClickhouseWrite},
     types::{DeserializerState, SerializerState, Type},
     values::Value,
@@ -41,7 +41,7 @@ impl BlockInfo {
                     new.bucket_num = reader.read_i32_le().await?;
                 }
                 field_num => {
-                    return Err(KlickhouseError::ProtocolError(format!(
+                    return Err(NativeclickError::ProtocolError(format!(
                         "unknown block info field number: {field_num}"
                     )));
                 }
@@ -228,7 +228,7 @@ impl Block {
             writer.write_string(&name).await?;
             writer.write_string(&type_.to_string()).await?;
             if data.len() != self.rows as usize {
-                return Err(KlickhouseError::ProtocolError(format!(
+                return Err(NativeclickError::ProtocolError(format!(
                     "row and column length mismatch. {} != {}",
                     data.len(),
                     self.rows

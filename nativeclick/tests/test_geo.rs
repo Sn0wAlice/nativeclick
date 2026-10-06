@@ -1,6 +1,6 @@
-use klickhouse::{MultiPolygon, Point, Polygon, Ring};
+use nativeclick::{MultiPolygon, Point, Polygon, Ring};
 
-#[derive(klickhouse::Row, Debug, Default, PartialEq, Clone)]
+#[derive(nativeclick::Row, Debug, Default, PartialEq, Clone)]
 pub struct Row {
     point: Point,
     ring: Ring,
@@ -67,7 +67,7 @@ async fn test_client() {
     assert_eq!(items, items2);
 }
 
-#[derive(Clone, PartialEq, Debug, klickhouse::Row)]
+#[derive(Clone, PartialEq, Debug, nativeclick::Row)]
 struct RowWkt {
     multipolygon: geo_types::MultiPolygon,
 }

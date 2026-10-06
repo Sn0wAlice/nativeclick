@@ -1,6 +1,6 @@
 use chrono::Utc;
 use futures_util::StreamExt;
-use klickhouse::*;
+use nativeclick::*;
 
 #[derive(Row, Debug, Default)]
 pub struct MyUserData {
@@ -50,13 +50,13 @@ async fn main() {
 
     // Prepare table
     client
-        .execute("DROP TABLE IF EXISTS klickhouse_example")
+        .execute("DROP TABLE IF EXISTS nativeclick_example")
         .await
         .unwrap();
     client
         .execute(
             "
-    CREATE TABLE klickhouse_example (
+    CREATE TABLE nativeclick_example (
          id UUID,
          user_data String,
          created_at DateTime('UTC'))
@@ -74,13 +74,13 @@ async fn main() {
         })
         .collect();
     client
-        .insert_native_block("INSERT INTO klickhouse_example FORMAT native", rows)
+        .insert_native_block("INSERT INTO nativeclick_example FORMAT native", rows)
         .await
         .unwrap();
 
     // Read back rows
     let mut all_rows = client
-        .query::<MyUserData>("SELECT * FROM klickhouse_example;")
+        .query::<MyUserData>("SELECT * FROM nativeclick_example;")
         .await
         .unwrap();
 

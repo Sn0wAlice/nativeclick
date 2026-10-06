@@ -1,11 +1,11 @@
 use rust_decimal::Decimal;
 
-use crate::{FromSql, KlickhouseError, Result, ToSql, Type, Value, unexpected_type};
+use crate::{FromSql, NativeclickError, Result, ToSql, Type, Value, unexpected_type};
 
 impl FromSql for Decimal {
     fn from_sql(type_: &Type, value: Value) -> Result<Self> {
-        fn out_of_range(name: &str) -> KlickhouseError {
-            KlickhouseError::DeserializeError(format!("{name} out of bounds for rust_decimal"))
+        fn out_of_range(name: &str) -> NativeclickError {
+            NativeclickError::DeserializeError(format!("{name} out of bounds for rust_decimal"))
         }
 
         match value {
@@ -43,8 +43,8 @@ impl FromSql for Decimal {
 
 impl ToSql for Decimal {
     fn to_sql(self, type_hint: Option<&Type>) -> Result<Value> {
-        fn out_of_range(name: &str) -> KlickhouseError {
-            KlickhouseError::SerializeError(format!("{name} out of bounds for rust_decimal"))
+        fn out_of_range(name: &str) -> NativeclickError {
+            NativeclickError::SerializeError(format!("{name} out of bounds for rust_decimal"))
         }
 
         fn mantissa_to_scale(mantissa: i128, scale: u32, precision: u32) -> Result<i128> {
@@ -80,7 +80,7 @@ impl ToSql for Decimal {
                     mantissa_to_scale(mantissa, scale, *precision as u32)?,
                 ))
             }
-            Some(x) => Err(KlickhouseError::SerializeError(format!(
+            Some(x) => Err(NativeclickError::SerializeError(format!(
                 "unexpected type: {x}"
             ))),
         }

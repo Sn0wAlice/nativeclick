@@ -7,7 +7,7 @@ use syn::parse::{self, Parse, ParseStream};
 use syn::punctuated::Punctuated;
 use syn::{Expr, Ident, Meta};
 
-// This module handles parsing of `#[klickhouse(...)]` attributes. The entrypoints
+// This module handles parsing of `#[nativeclick(...)]` attributes. The entrypoints
 // are `attr::Container::from_ast`, `attr::Variant::from_ast`, and
 // `attr::Field::from_ast`. Each returns an instance of the corresponding
 // struct. Note that none of them return a Result. Unrecognized, malformed, or
@@ -40,7 +40,7 @@ impl<'c, T> Attr<'c, T> {
         if self.value.is_some() {
             self.cx.error_spanned_by(
                 tokens,
-                format!("duplicate klickhouse attribute `{}`", self.name),
+                format!("duplicate nativeclick attribute `{}`", self.name),
             );
         } else {
             self.tokens = tokens;
@@ -122,7 +122,7 @@ pub struct Container {
 }
 
 impl Container {
-    /// Extract out the `#[klickhouse(...)]` attributes from an item.
+    /// Extract out the `#[nativeclick(...)]` attributes from an item.
     pub fn from_ast(cx: &Ctxt, item: &syn::DeriveInput) -> Self {
         let mut rename = Attr::none(cx, RENAME);
         let mut deny_unknown_fields = BoolAttr::none(cx, DENY_UNKNOWN_FIELDS);
@@ -136,11 +136,11 @@ impl Container {
         for meta_item in item
             .attrs
             .iter()
-            .flat_map(|attr| get_klickhouse_meta_items(cx, attr))
+            .flat_map(|attr| get_nativeclick_meta_items(cx, attr))
             .flatten()
         {
             match &meta_item {
-                // Parse `#[klickhouse(rename = "foo")]`
+                // Parse `#[nativeclick(rename = "foo")]`
                 Meta::NameValue(m) if m.path == RENAME => {
                     let Expr::Lit(expr_lit) = &m.value else {
                         continue;
@@ -151,7 +151,7 @@ impl Container {
                     }
                 }
 
-                // Parse `#[klickhouse(rename_all = "foo")]`
+                // Parse `#[nativeclick(rename_all = "foo")]`
                 Meta::NameValue(m) if m.path == RENAME_ALL => {
                     let Expr::Lit(expr_lit) = &m.value else {
                         continue;
@@ -167,12 +167,12 @@ impl Container {
                     }
                 }
 
-                // Parse `#[klickhouse(deny_unknown_fields)]`
+                // Parse `#[nativeclick(deny_unknown_fields)]`
                 Meta::Path(word) if word == DENY_UNKNOWN_FIELDS => {
                     deny_unknown_fields.set_true(word);
                 }
 
-                // Parse `#[klickhouse(default)]`
+                // Parse `#[nativeclick(default)]`
                 Meta::Path(word) if word == DEFAULT => match &item.data {
                     syn::Data::Struct(syn::DataStruct { fields, .. }) => match fields {
                         syn::Fields::Named(_) => {
@@ -180,20 +180,20 @@ impl Container {
                         }
                         syn::Fields::Unnamed(_) | syn::Fields::Unit => cx.error_spanned_by(
                             fields,
-                            "#[klickhouse(default)] can only be used on structs with named fields",
+                            "#[nativeclick(default)] can only be used on structs with named fields",
                         ),
                     },
                     syn::Data::Enum(syn::DataEnum { enum_token, .. }) => cx.error_spanned_by(
                         enum_token,
-                        "#[klickhouse(default)] can only be used on structs with named fields",
+                        "#[nativeclick(default)] can only be used on structs with named fields",
                     ),
                     syn::Data::Union(syn::DataUnion { union_token, .. }) => cx.error_spanned_by(
                         union_token,
-                        "#[klickhouse(default)] can only be used on structs with named fields",
+                        "#[nativeclick(default)] can only be used on structs with named fields",
                     ),
                 },
 
-                // Parse `#[klickhouse(default = "...")]`
+                // Parse `#[nativeclick(default = "...")]`
                 Meta::NameValue(m) if m.path == DEFAULT => {
                     let Expr::Lit(expr_lit) = &m.value else {
                         continue;
@@ -209,26 +209,26 @@ impl Container {
                                     syn::Fields::Unnamed(_) | syn::Fields::Unit => cx
                                         .error_spanned_by(
                                             fields,
-                                            "#[klickhouse(default = \"...\")] can only be used on structs with named fields",
+                                            "#[nativeclick(default = \"...\")] can only be used on structs with named fields",
                                         ),
                                 }
                             }
                             syn::Data::Enum(syn::DataEnum { enum_token, .. }) => cx
                                 .error_spanned_by(
                                     enum_token,
-                                    "#[klickhouse(default = \"...\")] can only be used on structs with named fields",
+                                    "#[nativeclick(default = \"...\")] can only be used on structs with named fields",
                                 ),
                             syn::Data::Union(syn::DataUnion {
                                 union_token, ..
                             }) => cx.error_spanned_by(
                                 union_token,
-                                "#[klickhouse(default = \"...\")] can only be used on structs with named fields",
+                                "#[nativeclick(default = \"...\")] can only be used on structs with named fields",
                             ),
                         }
                     }
                 }
 
-                // Parse `#[klickhouse(bound = "T: SomeBound")]`
+                // Parse `#[nativeclick(bound = "T: SomeBound")]`
                 Meta::NameValue(m) if m.path == BOUND => {
                     let Expr::Lit(expr_lit) = &m.value else {
                         continue;
@@ -241,7 +241,7 @@ impl Container {
                     }
                 }
 
-                // Parse `#[klickhouse(from = "Type")]
+                // Parse `#[nativeclick(from = "Type")]
                 Meta::NameValue(m) if m.path == FROM => {
                     let Expr::Lit(expr_lit) = &m.value else {
                         continue;
@@ -252,7 +252,7 @@ impl Container {
                     }
                 }
 
-                // Parse `#[klickhouse(try_from = "Type")]
+                // Parse `#[nativeclick(try_from = "Type")]
                 Meta::NameValue(m) if m.path == TRY_FROM => {
                     let Expr::Lit(expr_lit) = &m.value else {
                         continue;
@@ -263,7 +263,7 @@ impl Container {
                     }
                 }
 
-                // Parse `#[klickhouse(into = "Type")]
+                // Parse `#[nativeclick(into = "Type")]
                 Meta::NameValue(m) if m.path == INTO => {
                     let Expr::Lit(expr_lit) = &m.value else {
                         continue;
@@ -282,7 +282,7 @@ impl Container {
                         .replace(' ', "");
                     cx.error_spanned_by(
                         meta_item.path(),
-                        format!("unknown klickhouse container attribute `{path}`"),
+                        format!("unknown nativeclick container attribute `{path}`"),
                     );
                 }
             }
@@ -372,7 +372,7 @@ pub enum Default {
 }
 
 impl Field {
-    /// Extract out the `#[klickhouse(...)]` attributes from a struct field.
+    /// Extract out the `#[nativeclick(...)]` attributes from a struct field.
     pub fn from_ast(
         cx: &Ctxt,
         index: usize,
@@ -397,11 +397,11 @@ impl Field {
         for meta_item in field
             .attrs
             .iter()
-            .flat_map(|attr| get_klickhouse_meta_items(cx, attr))
+            .flat_map(|attr| get_nativeclick_meta_items(cx, attr))
             .flatten()
         {
             match &meta_item {
-                // Parse `#[klickhouse(rename = "foo")]`
+                // Parse `#[nativeclick(rename = "foo")]`
                 Meta::NameValue(m) if m.path == RENAME => {
                     let Expr::Lit(expr_lit) = &m.value else {
                         continue;
@@ -412,12 +412,12 @@ impl Field {
                     }
                 }
 
-                // Parse `#[klickhouse(default)]`
+                // Parse `#[nativeclick(default)]`
                 Meta::Path(word) if word == DEFAULT => {
                     default.set(word, Default::Default);
                 }
 
-                // Parse `#[klickhouse(default = "...")]`
+                // Parse `#[nativeclick(default = "...")]`
                 Meta::NameValue(m) if m.path == DEFAULT => {
                     let Expr::Lit(expr_lit) = &m.value else {
                         continue;
@@ -428,33 +428,33 @@ impl Field {
                     }
                 }
 
-                // Parse `#[klickhouse(skip_serializing)]`
+                // Parse `#[nativeclick(skip_serializing)]`
                 Meta::Path(word) if word == SKIP_SERIALIZING => {
                     skip_serializing.set_true(word);
                 }
 
-                // Parse `#[klickhouse(nested)]`
+                // Parse `#[nativeclick(nested)]`
                 Meta::Path(word) if word == NESTED => {
                     nested.set_true(word);
                 }
 
-                // Parse `#[klickhouse(flatten)]`
+                // Parse `#[nativeclick(flatten)]`
                 Meta::Path(word) if word == FLATTEN => {
                     flatten.set_true(word);
                 }
 
-                // Parse `#[klickhouse(skip_deserializing)]`
+                // Parse `#[nativeclick(skip_deserializing)]`
                 Meta::Path(word) if word == SKIP_DESERIALIZING => {
                     skip_deserializing.set_true(word);
                 }
 
-                // Parse `#[klickhouse(skip)]`
+                // Parse `#[nativeclick(skip)]`
                 Meta::Path(word) if word == SKIP => {
                     skip_serializing.set_true(word);
                     skip_deserializing.set_true(word);
                 }
 
-                // Parse `#[klickhouse(serialize_with = "...")]`
+                // Parse `#[nativeclick(serialize_with = "...")]`
                 Meta::NameValue(m) if m.path == SERIALIZE_WITH => {
                     let Expr::Lit(expr_lit) = &m.value else {
                         continue;
@@ -465,7 +465,7 @@ impl Field {
                     }
                 }
 
-                // Parse `#[klickhouse(deserialize_with = "...")]`
+                // Parse `#[nativeclick(deserialize_with = "...")]`
                 Meta::NameValue(m) if m.path == DESERIALIZE_WITH => {
                     let Expr::Lit(expr_lit) = &m.value else {
                         continue;
@@ -477,7 +477,7 @@ impl Field {
                     }
                 }
 
-                // Parse `#[klickhouse(with = "...")]`
+                // Parse `#[nativeclick(with = "...")]`
                 Meta::NameValue(m) if m.path == WITH => {
                     let Expr::Lit(expr_lit) = &m.value else {
                         continue;
@@ -499,7 +499,7 @@ impl Field {
                     }
                 }
 
-                // Parse `#[klickhouse(bound = "T: SomeBound")]`
+                // Parse `#[nativeclick(bound = "T: SomeBound")]`
                 Meta::NameValue(m) if m.path == BOUND => {
                     let Expr::Lit(expr_lit) = &m.value else {
                         continue;
@@ -520,14 +520,14 @@ impl Field {
                         .replace(' ', "");
                     cx.error_spanned_by(
                         meta_item.path(),
-                        format!("unknown klickhouse field attribute `{path}`"),
+                        format!("unknown nativeclick field attribute `{path}`"),
                     );
                 }
             }
         }
 
         // Is skip_deserializing, initialize the field to Default::default() unless a
-        // different default is specified by `#[klickhouse(default = "...")]` on
+        // different default is specified by `#[nativeclick(default = "...")]` on
         // ourselves or our container (e.g. the struct we are in).
         if let Default::None = *container_default {
             if skip_deserializing.0.value.is_some() {
@@ -591,8 +591,8 @@ impl Field {
     }
 }
 
-pub fn get_klickhouse_meta_items(cx: &Ctxt, attr: &syn::Attribute) -> Result<Vec<syn::Meta>, ()> {
-    if !attr.path().is_ident(&KLICKHOUSE) {
+pub fn get_nativeclick_meta_items(cx: &Ctxt, attr: &syn::Attribute) -> Result<Vec<syn::Meta>, ()> {
+    if !attr.path().is_ident(&NATIVECLICK) {
         return Ok(Vec::new());
     }
 
@@ -624,7 +624,7 @@ fn get_lit_str2<'a>(
         cx.error_spanned_by(
             lit,
             format!(
-                "expected klickhouse {attr_name} attribute to be a string: `{meta_item_name} = \"...\"`"
+                "expected nativeclick {attr_name} attribute to be a string: `{meta_item_name} = \"...\"`"
             ),
         );
         Err(())

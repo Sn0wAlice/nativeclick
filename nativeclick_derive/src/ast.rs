@@ -40,11 +40,11 @@ impl<'a> Container<'a> {
         let mut data = match &item.data {
             syn::Data::Struct(data) => struct_from_ast(cx, &data.fields, attrs.default()),
             syn::Data::Union(_) => {
-                cx.error_spanned_by(item, "Klickhouse Row does not support unions");
+                cx.error_spanned_by(item, "Nativeclick Row does not support unions");
                 return None;
             }
             syn::Data::Enum(_) => {
-                cx.error_spanned_by(item, "Klickhouse Row does not support enums");
+                cx.error_spanned_by(item, "Nativeclick Row does not support enums");
                 return None;
             }
         };
@@ -73,11 +73,11 @@ fn struct_from_ast<'a>(
     match fields {
         syn::Fields::Named(fields) => fields_from_ast(cx, &fields.named, container_default),
         syn::Fields::Unnamed(fields) => {
-            cx.error_spanned_by(fields, "Klickhouse Row does not support tuple structs");
+            cx.error_spanned_by(fields, "Nativeclick Row does not support tuple structs");
             vec![]
         }
         syn::Fields::Unit => {
-            cx.error_spanned_by(fields, "Klickhouse Row does not support unit structs");
+            cx.error_spanned_by(fields, "Nativeclick Row does not support unit structs");
             vec![]
         }
     }

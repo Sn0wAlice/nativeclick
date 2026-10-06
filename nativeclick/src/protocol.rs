@@ -1,7 +1,7 @@
 use indexmap::IndexMap;
 use uuid::Uuid;
 
-use crate::{KlickhouseError, Result, block::Block, progress::Progress};
+use crate::{NativeclickError, Result, block::Block, progress::Progress};
 
 pub const DBMS_MIN_REVISION_WITH_CLIENT_INFO: u64 = 54032;
 pub const DBMS_MIN_REVISION_WITH_SERVER_TIMEZONE: u64 = 54058;
@@ -80,7 +80,7 @@ impl ServerPacketId {
             12 => ServerPacketId::PartUUIDs,
             13 => ServerPacketId::ReadTaskRequest,
             x => {
-                return Err(KlickhouseError::ProtocolError(format!(
+                return Err(NativeclickError::ProtocolError(format!(
                     "invalid packet id from server: {x}"
                 )));
             }
@@ -118,8 +118,8 @@ pub struct ServerException {
 }
 
 impl ServerException {
-    pub fn emit(&self) -> KlickhouseError {
-        KlickhouseError::ServerException {
+    pub fn emit(&self) -> NativeclickError {
+        NativeclickError::ServerException {
             code: self.code,
             name: self.name.clone(),
             message: self.message.clone(),

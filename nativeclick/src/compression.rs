@@ -11,7 +11,7 @@ use crate::block::Block;
 use crate::internal_client_in::MAX_COMPRESSION_SIZE;
 use crate::io::ClickhouseRead;
 use crate::protocol::CompressionMethod;
-use crate::{KlickhouseError, Result};
+use crate::{NativeclickError, Result};
 
 pub async fn compress_block(block: Block, revision: u64) -> Result<(Vec<u8>, usize)> {
     let mut raw = vec![];
@@ -27,7 +27,7 @@ pub async fn compress_block(block: Block, revision: u64) -> Result<(Vec<u8>, usi
         )
     };
     if out_len <= 0 {
-        return Err(KlickhouseError::ProtocolError(
+        return Err(NativeclickError::ProtocolError(
             "invalid compression state".to_string(),
         ));
     }
@@ -51,7 +51,7 @@ pub fn decompress_block(data: &[u8], decompressed_size: u32) -> Result<Vec<u8>> 
         )
     };
     if out_len < 0 {
-        return Err(KlickhouseError::ProtocolError(
+        return Err(NativeclickError::ProtocolError(
             "malformed compressed block".to_string(),
         ));
     }
@@ -71,7 +71,7 @@ async fn read_compressed_blob(
         ((reader.read_u64_le().await? as u128) << 64u128) | (reader.read_u64_le().await? as u128);
     let type_byte = reader.read_u8().await?;
     if type_byte != compression.byte() {
-        return Err(KlickhouseError::ProtocolError(format!(
+        return Err(NativeclickError::ProtocolError(format!(
             "unexpected compression algorithm identifier: '{:02X}', expected {:02X} ({:?})",
             type_byte,
             compression.byte(),
@@ -81,11 +81,11 @@ async fn read_compressed_blob(
     let compressed_size = reader.read_u32_le().await?;
     if compressed_size > MAX_COMPRESSION_SIZE {
         // 1 GB
-        return Err(KlickhouseError::ProtocolError(format!(
+        return Err(NativeclickError::ProtocolError(format!(
             "compressed payload too large! {compressed_size} > {MAX_COMPRESSION_SIZE}"
         )));
     } else if compressed_size < 9 {
-        return Err(KlickhouseError::ProtocolError(format!(
+        return Err(NativeclickError::ProtocolError(format!(
             "compressed payload too small! {compressed_size} < 9"
         )));
     }
@@ -97,7 +97,7 @@ async fn read_compressed_blob(
     compressed[5..9].copy_from_slice(&decompressed_size.to_le_bytes()[..]);
     let calc_checksum = cityhash_rs::cityhash_102_128(&compressed[..]);
     if calc_checksum != checksum {
-        return Err(KlickhouseError::ProtocolError(format!(
+        return Err(NativeclickError::ProtocolError(format!(
             "corrupt checksum from clickhouse '{calc_checksum:032X}' vs '{checksum:032X}'"
         )));
     }

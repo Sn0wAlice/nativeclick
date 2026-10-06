@@ -1,6 +1,6 @@
 use std::borrow::Cow;
 
-use crate::{KlickhouseError, Result, Value, types::Type};
+use crate::{NativeclickError, Result, Value, types::Type};
 
 mod raw_row;
 mod std_deserialize;
@@ -26,8 +26,8 @@ impl ToSql for Value {
     }
 }
 
-pub fn unexpected_type(type_: &Type) -> KlickhouseError {
-    KlickhouseError::DeserializeError(format!("unexpected type: {type_}"))
+pub fn unexpected_type(type_: &Type) -> NativeclickError {
+    NativeclickError::DeserializeError(format!("unexpected type: {type_}"))
 }
 
 /// A type that can be converted from a raw Clickhouse SQL value.
@@ -42,8 +42,8 @@ impl FromSql for Value {
 }
 
 /// A row that can be deserialized and serialized from a raw Clickhouse SQL value.
-/// Generally this is not implemented manually, but using `klickhouse_derive::Row`.
-/// I.e. `#[derive(klickhouse::Row)]`.
+/// Generally this is not implemented manually, but using `nativeclick_derive::Row`.
+/// I.e. `#[derive(nativeclick::Row)]`.
 pub trait Row: Sized {
     /// If `Some`, `serialize_row` and `deserialize_row` MUST return this number of columns
     const COLUMN_COUNT: Option<usize>;

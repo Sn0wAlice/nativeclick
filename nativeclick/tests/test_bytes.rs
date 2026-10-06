@@ -1,6 +1,6 @@
-use klickhouse::{Bytes, RawRow};
+use nativeclick::{Bytes, RawRow};
 
-#[derive(klickhouse::Row, Debug, Default, PartialEq, Clone)]
+#[derive(nativeclick::Row, Debug, Default, PartialEq, Clone)]
 pub struct Row {
     raw_bytes: Vec<u8>,
     raw_bytes2: Bytes,

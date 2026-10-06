@@ -1,6 +1,6 @@
 use indexmap::IndexMap;
-use klickhouse::block::Block;
-use klickhouse::{Type, Value};
+use nativeclick::block::Block;
+use nativeclick::{Type, Value};
 use tokio_stream::StreamExt;
 
 #[tokio::test]

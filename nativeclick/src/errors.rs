@@ -5,7 +5,7 @@ use thiserror::Error;
 use crate::Type;
 
 #[derive(Error, Debug)]
-pub enum KlickhouseError {
+pub enum NativeclickError {
     #[error("no rows received when expecting at least one row")]
     MissingRow,
     #[error("can't fetch the same column twice from RawRow")]
@@ -43,21 +43,21 @@ pub enum KlickhouseError {
     Utf8(#[from] FromUtf8Error),
 }
 
-impl KlickhouseError {
+impl NativeclickError {
     pub fn with_column_name(self, name: &'static str) -> Self {
         match self {
-            KlickhouseError::DeserializeError(e) => {
-                KlickhouseError::DeserializeErrorWithColumn(name, e)
+            NativeclickError::DeserializeError(e) => {
+                NativeclickError::DeserializeErrorWithColumn(name, e)
             }
-            KlickhouseError::UnexpectedType(e) => {
-                KlickhouseError::UnexpectedTypeWithColumn(Cow::Borrowed(name), e)
+            NativeclickError::UnexpectedType(e) => {
+                NativeclickError::UnexpectedTypeWithColumn(Cow::Borrowed(name), e)
             }
             x => x,
         }
     }
 }
 
-impl Clone for KlickhouseError {
+impl Clone for NativeclickError {
     fn clone(&self) -> Self {
         match self {
             Self::MissingRow => Self::MissingRow,
@@ -93,4 +93,4 @@ impl Clone for KlickhouseError {
     }
 }
 
-pub type Result<T, E = KlickhouseError> = std::result::Result<T, E>;
+pub type Result<T, E = NativeclickError> = std::result::Result<T, E>;

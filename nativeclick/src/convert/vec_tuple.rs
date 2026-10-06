@@ -1,4 +1,4 @@
-use crate::{FromSql, KlickhouseError, Result, ToSql, Type, Value};
+use crate::{FromSql, NativeclickError, Result, ToSql, Type, Value};
 
 use super::unexpected_type;
 
@@ -29,7 +29,7 @@ impl<T: FromSql> FromSql for VecTuple<T> {
             _ => unimplemented!(),
         };
         if values.len() != subtype.len() {
-            return Err(KlickhouseError::DeserializeError(format!(
+            return Err(NativeclickError::DeserializeError(format!(
                 "unexpected type: mismatch tuple length expected {}, got {}",
                 subtype.len(),
                 values.len()

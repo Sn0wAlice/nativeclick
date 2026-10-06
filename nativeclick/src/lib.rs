@@ -10,7 +10,7 @@ mod client;
 #[cfg(feature = "compression")]
 mod compression;
 mod convert;
-/// Error generator functions used by `klickhouse_derive`
+/// Error generator functions used by `nativeclick_derive`
 mod errors;
 mod internal_client_in;
 mod internal_client_out;
@@ -45,7 +45,7 @@ pub use indexmap::IndexMap;
 /// This is similar in usage and implementation to the [serde::Serialize] and [serde::Deserialize] derive macros.
 ///
 /// ## serde attributes
-/// The following [serde attributes](https://serde.rs/attributes.html) are supported, using `#[klickhouse(...)]` instead of `#[serde(...)]`:
+/// The following [serde attributes](https://serde.rs/attributes.html) are supported, using `#[nativeclick(...)]` instead of `#[serde(...)]`:
 /// - `with`
 /// - `from` and `into`
 /// - `try_from`
@@ -64,8 +64,8 @@ pub use indexmap::IndexMap;
 /// - The `nested` attribute allows handling [Clickhouse nested data structures](https://clickhouse.com/docs/en/sql-reference/data-types/nested-data-structures/nested). See an example in the `tests` folder.
 ///
 /// ## Known issues
-/// - For serialization, the ordering of fields in the struct declaration must match the order in the `INSERT` statement, respectively in the table declaration. See issue [#34](https://github.com/Protryon/klickhouse/issues/34).
-pub use klickhouse_derive::Row;
+/// - For serialization, the ordering of fields in the struct declaration must match the order in the `INSERT` statement, respectively in the table declaration. See issue [#34](https://github.com/Sn0wAlice/nativeclick/issues/34).
+pub use nativeclick_derive::Row;
 
 pub use client::*;
 pub use convert::*;

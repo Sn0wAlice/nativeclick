@@ -1,4 +1,7 @@
-use std::collections::VecDeque;
+use std::{
+    collections::VecDeque,
+    sync::{Arc, Mutex},
+};
 
 use futures_util::{Stream, StreamExt, stream};
 use indexmap::IndexMap;
@@ -17,7 +20,7 @@ use tokio_stream::wrappers::ReceiverStream;
 use uuid::Uuid;
 
 use crate::{
-    NativeclickError, ParsedQuery, RawRow, Result,
+    NativeclickError, ParsedQuery, RawRow, Result, Type,
     block::{Block, BlockInfo},
     convert::Row,
     internal_client_in::InternalClientIn,
@@ -34,28 +37,53 @@ use log::*;
 const PROGRESS_CAPACITY: usize = 100;
 
 struct InnerClient<R: ClickhouseRead, W: ClickhouseWrite> {
-    input: InternalClientIn<R>,
+    input: Option<InternalClientIn<R>>,
     output: InternalClientOut<W>,
     options: ClientOptions,
     pending_queries: VecDeque<PendingQuery>,
-    executing_query: Option<(Uuid, mpsc::Sender<Result<Block>>)>,
+    executing_query: Option<ExecutingQuery>,
     progress: broadcast::Sender<(Uuid, Progress)>,
+    closed: ClosedReason,
 }
+
+/// Why the connection task stopped, shared with every [`Client`] handle so later calls report
+/// the real cause instead of a bare "channel closed".
+type ClosedReason = Arc<Mutex<Option<NativeclickError>>>;
 
 struct PendingQuery {
     query: String,
-    response: oneshot::Sender<mpsc::Receiver<Result<Block>>>,
+    insert: bool,
+    response: oneshot::Sender<(Uuid, mpsc::Receiver<Result<Block>>)>,
+}
+
+struct ExecutingQuery {
+    id: Uuid,
+    sender: mpsc::Sender<Result<Block>>,
+    insert: bool,
+    /// An INSERT whose header block arrived and whose data is not terminated yet: the server
+    /// reads `Data` packets until an empty one, even after it failed the query.
+    awaiting_data: bool,
+}
+
+fn empty_block() -> Block {
+    Block {
+        info: BlockInfo::default(),
+        rows: 0,
+        column_types: IndexMap::new(),
+        column_data: IndexMap::new(),
+    }
 }
 
 impl<R: ClickhouseRead + 'static, W: ClickhouseWrite> InnerClient<R, W> {
-    pub fn new(reader: R, writer: W, options: ClientOptions) -> Self {
+    pub fn new(reader: R, writer: W, options: ClientOptions, closed: ClosedReason) -> Self {
         Self {
-            input: InternalClientIn::new(reader),
+            input: Some(InternalClientIn::new(reader)),
             output: InternalClientOut::new(writer),
             options,
             pending_queries: VecDeque::new(),
             executing_query: None,
             progress: broadcast::channel(PROGRESS_CAPACITY).0,
+            closed,
         }
     }
 
@@ -87,39 +115,67 @@ impl<R: ClickhouseRead + 'static, W: ClickhouseWrite> InnerClient<R, W> {
             .await?;
 
         let (sender, receiver) = mpsc::channel(32);
-        query.response.send(receiver).ok();
-        self.executing_query = Some((id, sender));
+        query.response.send((id, receiver)).ok();
+        self.executing_query = Some(ExecutingQuery {
+            id,
+            sender,
+            insert: query.insert,
+            awaiting_data: false,
+        });
+        // Terminates the (empty) list of external tables.
         self.output
-            .send_data(
-                Block {
-                    info: BlockInfo::default(),
-                    rows: 0,
-                    column_types: IndexMap::new(),
-                    column_data: IndexMap::new(),
-                },
-                CompressionMethod::default(),
-                "",
-                false,
-            )
+            .send_data(empty_block(), CompressionMethod::default(), "", false)
             .await?;
+        Ok(())
+    }
+
+    async fn dispatch_next(&mut self) -> Result<()> {
+        if let Some(query) = self.pending_queries.pop_front() {
+            self.dispatch_query(query).await?;
+        }
         Ok(())
     }
 
     async fn handle_request(&mut self, request: ClientRequest) -> Result<()> {
         match request.data {
-            ClientRequestData::Query { query, response } => {
-                let query = PendingQuery { query, response };
+            ClientRequestData::Query {
+                query,
+                insert,
+                response,
+            } => {
+                let query = PendingQuery {
+                    query,
+                    insert,
+                    response,
+                };
                 if self.pending_queries.is_empty() && self.executing_query.is_none() {
                     self.dispatch_query(query).await?;
                 } else {
                     self.pending_queries.push_back(query);
                 }
             }
-            ClientRequestData::SendData { block, response } => {
+            ClientRequestData::SendData {
+                query_id,
+                block,
+                response,
+            } => {
+                // Data belongs to one INSERT: never write it into another query, nor after the
+                // server ended this one (it would read it as a stray packet).
+                let Some(current) = self
+                    .executing_query
+                    .as_mut()
+                    .filter(|x| x.id == query_id && x.awaiting_data)
+                else {
+                    response.send(Err(DataRejected::NotRunning)).ok();
+                    return Ok(());
+                };
+                if block.rows == 0 && block.column_types.is_empty() {
+                    current.awaiting_data = false;
+                }
                 self.output
                     .send_data(block, CompressionMethod::default(), "", false)
                     .await?;
-                response.send(()).ok();
+                response.send(Ok(())).ok();
             }
         }
         Ok(())
@@ -133,27 +189,36 @@ impl<R: ClickhouseRead + 'static, W: ClickhouseWrite> InnerClient<R, W> {
                 ));
             }
             ServerPacket::Data(block) => {
-                if let Some((_, current)) = self.executing_query.as_ref() {
-                    current.send(Ok(block.block)).await.ok();
-                } else {
+                let Some(current) = self.executing_query.as_mut() else {
                     return Err(NativeclickError::ProtocolError(
                         "received data block, but no pending queries".to_string(),
                     ));
+                };
+                // The first block of an INSERT is the table header: from now on the server
+                // expects data until an empty block.
+                if current.insert && !current.awaiting_data {
+                    current.awaiting_data = true;
+                    current.insert = false;
                 }
+                current.sender.send(Ok(block.block)).await.ok();
             }
             ServerPacket::Exception(e) => {
-                if let Some((_, current)) = self.executing_query.take() {
-                    current.send(Err(e.emit())).await.ok();
-                    if let Some(query) = self.pending_queries.pop_front() {
-                        self.dispatch_query(query).await?;
-                    }
-                } else {
+                let Some(current) = self.executing_query.take() else {
                     return Err(e.emit());
+                };
+                if current.awaiting_data {
+                    // The server skips the remaining data of a failed INSERT up to the empty
+                    // block; send it now so it is ready for the next query.
+                    self.output
+                        .send_data(empty_block(), CompressionMethod::default(), "", false)
+                        .await?;
                 }
+                current.sender.send(Err(e.emit())).await.ok();
+                self.dispatch_next().await?;
             }
             ServerPacket::Progress(progress) => {
-                if let Some((id, _)) = &self.executing_query {
-                    let _ = self.progress.send((*id, progress));
+                if let Some(current) = &self.executing_query {
+                    let _ = self.progress.send((current.id, progress));
                 }
             }
             ServerPacket::Pong => {}
@@ -163,9 +228,7 @@ impl<R: ClickhouseRead + 'static, W: ClickhouseWrite> InnerClient<R, W> {
                         "received end of stream, but no executing query".to_string(),
                     ));
                 }
-                if let Some(query) = self.pending_queries.pop_front() {
-                    self.dispatch_query(query).await?;
-                }
+                self.dispatch_next().await?;
             }
             ServerPacket::ProfileInfo(_) => {}
             ServerPacket::Totals(_) => {}
@@ -179,7 +242,8 @@ impl<R: ClickhouseRead + 'static, W: ClickhouseWrite> InnerClient<R, W> {
         Ok(())
     }
 
-    async fn run_inner(mut self, mut input: Receiver<ClientRequest>) -> Result<()> {
+    async fn run_inner(&mut self, input: &mut Receiver<ClientRequest>) -> Result<()> {
+        let mut reader = self.input.take().expect("connection task started twice");
         self.output
             .send_hello(ClientHello {
                 default_database: &self.options.default_database,
@@ -187,42 +251,102 @@ impl<R: ClickhouseRead + 'static, W: ClickhouseWrite> InnerClient<R, W> {
                 password: &self.options.password,
             })
             .await?;
-        let hello_response = self.input.receive_hello().await?;
-        self.input.server_hello = hello_response.clone();
-        self.output.server_hello = hello_response.clone();
+        let hello_response = reader.receive_hello().await?;
+        reader.server_hello = hello_response.clone();
+        self.output.server_hello = hello_response;
 
-        loop {
+        // Packets are read in their own task: reading one takes many awaits, and dropping that
+        // future halfway (as a `select!` against new requests would) loses the bytes already read.
+        let (packet_sender, mut packets) = mpsc::channel(4);
+        let reader_task = AbortOnDrop(tokio::spawn(async move {
+            loop {
+                let packet = reader.receive_packet().await;
+                let failed = packet.is_err();
+                if packet_sender.send(packet).await.is_err() || failed {
+                    break;
+                }
+            }
+        }));
+
+        let result = loop {
             select! {
-                request = input.recv() => {
-                    if request.is_none() {
-                        return Ok(());
-                    }
-                    self.handle_request(request.unwrap()).await?;
+                request = input.recv() => match request {
+                    Some(request) => self.handle_request(request).await?,
+                    None => break Ok(()),
                 },
-                packet = self.input.receive_packet() => {
-                    let packet = packet?;
-                    self.receive_packet(packet).await?;
+                packet = packets.recv() => match packet {
+                    Some(packet) => self.receive_packet(packet?).await?,
+                    None => break Err(NativeclickError::ProtocolError(
+                        "connection reader stopped".to_string(),
+                    )),
                 },
+            }
+        };
+        drop(reader_task);
+        result
+    }
+
+    /// Hands `error` to every caller still waiting on this connection.
+    async fn fail(&mut self, error: NativeclickError, input: &mut Receiver<ClientRequest>) {
+        *self.closed.lock().unwrap() = Some(error.clone());
+        input.close();
+        if let Some(current) = self.executing_query.take() {
+            current.sender.send(Err(error.clone())).await.ok();
+        }
+        let failed_query = |response: oneshot::Sender<(Uuid, mpsc::Receiver<Result<Block>>)>| {
+            let (sender, receiver) = mpsc::channel(1);
+            sender.try_send(Err(error.clone())).ok();
+            response.send((Uuid::nil(), receiver)).ok();
+        };
+        for query in self.pending_queries.drain(..) {
+            failed_query(query.response);
+        }
+        while let Ok(request) = input.try_recv() {
+            match request.data {
+                ClientRequestData::Query { response, .. } => failed_query(response),
+                ClientRequestData::SendData { response, .. } => {
+                    response.send(Err(DataRejected::Error(error.clone()))).ok();
+                }
             }
         }
     }
 
-    pub async fn run(self, input: Receiver<ClientRequest>) {
-        if let Err(e) = self.run_inner(input).await {
+    pub async fn run(mut self, mut input: Receiver<ClientRequest>) {
+        if let Err(e) = self.run_inner(&mut input).await {
             error!("clickhouse client failed: {:?}", e);
+            self.fail(e, &mut input).await;
         }
+    }
+}
+
+/// Aborts the spawned task when dropped, so the reader never outlives its connection.
+struct AbortOnDrop(tokio::task::JoinHandle<()>);
+
+impl Drop for AbortOnDrop {
+    fn drop(&mut self) {
+        self.0.abort();
     }
 }
 
 enum ClientRequestData {
     Query {
         query: String,
-        response: oneshot::Sender<mpsc::Receiver<Result<Block>>>,
+        insert: bool,
+        response: oneshot::Sender<(Uuid, mpsc::Receiver<Result<Block>>)>,
     },
     SendData {
+        query_id: Uuid,
         block: Block,
-        response: oneshot::Sender<()>,
+        response: oneshot::Sender<std::result::Result<(), DataRejected>>,
     },
+}
+
+/// Why the connection task did not send a block of INSERT data.
+enum DataRejected {
+    /// The query ended (the server failed it) before this block: its error is in the query's
+    /// response stream.
+    NotRunning,
+    Error(NativeclickError),
 }
 
 struct ClientRequest {
@@ -234,6 +358,7 @@ struct ClientRequest {
 pub struct Client {
     sender: mpsc::Sender<ClientRequest>,
     progress: broadcast::Sender<(Uuid, Progress)>,
+    closed: ClosedReason,
 }
 
 /// Options set for a Clickhouse connection.
@@ -267,6 +392,7 @@ impl Client {
             BufReader::new(read),
             BufWriter::new(writer),
             options,
+            ClosedReason::default(),
         ))
         .await
     }
@@ -298,14 +424,47 @@ impl Client {
         inner: InnerClient<R, W>,
     ) -> Result<Self> {
         let progress = inner.progress.clone();
+        let closed = inner.closed.clone();
         let (sender, receiver) = mpsc::channel(1024);
 
         tokio::spawn(inner.run(receiver));
-        let client = Client { sender, progress };
+        let client = Client {
+            sender,
+            progress,
+            closed,
+        };
         client
             .execute("SET date_time_input_format='best_effort'")
             .await?;
         Ok(client)
+    }
+
+    /// The error that stopped the connection, or a generic one if it is still being reported.
+    fn closed_error(&self) -> NativeclickError {
+        self.closed
+            .lock()
+            .unwrap()
+            .clone()
+            .unwrap_or_else(|| NativeclickError::ProtocolError("connection closed".to_string()))
+    }
+
+    async fn start_query(
+        &self,
+        query: impl TryInto<ParsedQuery, Error = NativeclickError>,
+        insert: bool,
+    ) -> Result<(Uuid, mpsc::Receiver<Result<Block>>)> {
+        let (sender, receiver) = oneshot::channel();
+        self.sender
+            .send(ClientRequest {
+                data: ClientRequestData::Query {
+                    query: query.try_into()?.0.trim().to_string(),
+                    insert,
+                    response: sender,
+                },
+            })
+            .await
+            .map_err(|_| self.closed_error())?;
+        receiver.await.map_err(|_| self.closed_error())
     }
 
     /// Sends a query string and read column blocks over a stream.
@@ -314,38 +473,77 @@ impl Client {
         &self,
         query: impl TryInto<ParsedQuery, Error = NativeclickError>,
     ) -> Result<ReceiverStream<Result<Block>>> {
-        let (sender, receiver) = oneshot::channel();
-        self.sender
-            .send(ClientRequest {
-                data: ClientRequestData::Query {
-                    query: query.try_into()?.0,
-                    response: sender,
-                },
-            })
-            .await
-            .map_err(|e| NativeclickError::ProtocolError(format!("failed to send query: {e}")))?;
-        let receiver = receiver.await.map_err(|e| {
-            NativeclickError::ProtocolError(format!("failed to receive blocks from upstream: {e}"))
-        })?;
-
+        let (_, receiver) = self.start_query(query, false).await?;
         Ok(ReceiverStream::new(receiver))
     }
 
-    async fn send_data(&self, block: Block) -> Result<()> {
+    async fn send_data(
+        &self,
+        query_id: Uuid,
+        block: Block,
+    ) -> std::result::Result<(), DataRejected> {
         let (sender, receiver) = oneshot::channel();
         self.sender
             .send(ClientRequest {
                 data: ClientRequestData::SendData {
+                    query_id,
                     block,
                     response: sender,
                 },
             })
             .await
-            .map_err(|e| NativeclickError::ProtocolError(format!("failed to send block: {e}")))?;
-        receiver.await.map_err(|e| {
-            NativeclickError::ProtocolError(format!("failed to receive blocks from upstream: {e}"))
-        })?;
+            .map_err(|_| DataRejected::Error(self.closed_error()))?;
+        receiver
+            .await
+            .map_err(|_| DataRejected::Error(self.closed_error()))?
+    }
 
+    /// Sends the blocks of an INSERT, then its terminating empty block.
+    ///
+    /// When the server stops the INSERT early, its exception is returned rather than a
+    /// "query no longer running" from the next block.
+    async fn send_insert_data(
+        &self,
+        query_id: Uuid,
+        receiver: &mut mpsc::Receiver<Result<Block>>,
+        mut blocks: impl Stream<Item = Result<Block>> + Unpin,
+    ) -> Result<()> {
+        let mut failure = None;
+        let mut not_running = false;
+        while let Some(block) = blocks.next().await {
+            let sent = match block {
+                Ok(block) => self.send_data(query_id, block).await,
+                Err(e) => Err(DataRejected::Error(e)),
+            };
+            match sent {
+                Ok(()) => continue,
+                Err(DataRejected::NotRunning) => not_running = true,
+                Err(DataRejected::Error(e)) => failure = Some(e),
+            }
+            break;
+        }
+        // Always terminate the data, even after a client-side error: the server would wait
+        // for more of it otherwise.
+        if !not_running {
+            match self.send_data(query_id, empty_block()).await {
+                Ok(()) => {}
+                Err(DataRejected::NotRunning) => not_running = true,
+                Err(DataRejected::Error(e)) => {
+                    failure.get_or_insert(e);
+                }
+            }
+        }
+        if let Some(e) = failure {
+            drain_error(receiver).await;
+            return Err(e);
+        }
+        if not_running {
+            return Err(drain_error(receiver).await.unwrap_or_else(|| {
+                NativeclickError::ProtocolError(
+                    "the query is no longer running on the server".to_string(),
+                )
+            }));
+        }
         Ok(())
     }
 
@@ -355,105 +553,37 @@ impl Client {
     pub async fn insert_native_raw(
         &self,
         query: impl TryInto<ParsedQuery, Error = NativeclickError>,
-        mut blocks: impl Stream<Item = Block> + Send + Sync + Unpin + 'static,
+        blocks: impl Stream<Item = Block> + Send + Sync + Unpin + 'static,
     ) -> Result<impl Stream<Item = Result<Block>>> {
-        let (sender, receiver) = oneshot::channel();
-        self.sender
-            .send(ClientRequest {
-                data: ClientRequestData::Query {
-                    query: query.try_into()?.0,
-                    response: sender,
-                },
-            })
-            .await
-            .map_err(|e| NativeclickError::ProtocolError(format!("failed to send query: {e}")))?;
-        let receiver = receiver.await.map_err(|e| {
-            NativeclickError::ProtocolError(format!("failed to receive blocks from upstream: {e}"))
-        })?;
-
-        while let Some(block) = blocks.next().await {
-            self.send_data(block).await?;
-        }
-        self.send_data(Block {
-            info: BlockInfo::default(),
-            rows: 0,
-            column_types: IndexMap::new(),
-            column_data: IndexMap::new(),
-        })
-        .await?;
-
-        Ok(ReceiverStream::new(receiver))
+        let (id, mut receiver) = self.start_query(query, true).await?;
+        let header = receiver.recv().await.ok_or_else(|| self.closed_error())??;
+        self.send_insert_data(id, &mut receiver, blocks.map(Ok))
+            .await?;
+        Ok(stream::iter([Ok(header)]).chain(ReceiverStream::new(receiver)))
     }
 
     /// Sends a query string with streaming associated data (i.e. insert) over native protocol.
-    /// Once all outgoing blocks are written (EOF of `blocks` stream), then any response blocks from Clickhouse are read and DISCARDED.
+    /// Once all outgoing blocks are written (EOF of `blocks` stream), waits for Clickhouse to
+    /// confirm the insert and returns its error, if any. Response blocks are DISCARDED.
+    ///
+    /// A row that fails to serialize stops the insert with an error. Blocks sent before it
+    /// (earlier items of `blocks`) may already be inserted, as with any streamed insert.
     /// Make sure any query you send native data with has a `format native` suffix.
     pub async fn insert_native<T: Row + Send + Sync + 'static>(
         &self,
         query: impl TryInto<ParsedQuery, Error = NativeclickError>,
-        mut blocks: impl Stream<Item = Vec<T>> + Send + Sync + Unpin + 'static,
+        blocks: impl Stream<Item = Vec<T>> + Send + Sync + Unpin + 'static,
     ) -> Result<()> {
-        let (sender, receiver) = oneshot::channel();
-        self.sender
-            .send(ClientRequest {
-                data: ClientRequestData::Query {
-                    query: query.try_into()?.0.trim().to_string(),
-                    response: sender,
-                },
-            })
-            .await
-            .map_err(|e| NativeclickError::ProtocolError(format!("failed to send query: {e}")))?;
-        let mut receiver = receiver.await.map_err(|e| {
-            NativeclickError::ProtocolError(format!("failed to receive blocks from upstream: {e}"))
-        })?;
-        let first_block = receiver.recv().await.ok_or_else(|| {
-            NativeclickError::ProtocolError("missing header block from server".to_string())
-        })??;
-        while let Some(rows) = blocks.next().await {
-            if rows.is_empty() {
-                continue;
-            }
-            let mut block = Block {
-                info: BlockInfo::default(),
-                rows: rows.len() as u64,
-                column_types: first_block.column_types.clone(),
-                column_data: IndexMap::new(),
-            };
-            rows.into_iter()
-                .map(|x| x.serialize_row(&first_block.column_types))
-                .filter_map(|x| match x {
-                    Err(e) => {
-                        error!("serialization error during insert (SKIPPED ROWS!): {:?}", e);
-                        None
-                    }
-                    Ok(x) => Some(x),
-                })
-                .try_for_each(|x| -> Result<()> {
-                    for (key, value) in x {
-                        let type_ = first_block.column_types.get(&*key).ok_or_else(|| {
-                            NativeclickError::ProtocolError(format!(
-                                "missing type for data, column: {key}"
-                            ))
-                        })?;
-                        type_.validate_value(&value)?;
-                        if let Some(column) = block.column_data.get_mut(&*key) {
-                            column.push(value);
-                        } else {
-                            block.column_data.insert(key.into_owned(), vec![value]);
-                        }
-                    }
-                    Ok(())
-                })?;
-            self.send_data(block).await?;
+        let (id, mut receiver) = self.start_query(query, true).await?;
+        let header = receiver.recv().await.ok_or_else(|| self.closed_error())??;
+        let blocks = blocks
+            .filter(|rows| std::future::ready(!rows.is_empty()))
+            .map(|rows| rows_to_block(rows, &header.column_types));
+        self.send_insert_data(id, &mut receiver, blocks).await?;
+        match drain_error(&mut receiver).await {
+            Some(e) => Err(e),
+            None => Ok(()),
         }
-        self.send_data(Block {
-            info: BlockInfo::default(),
-            rows: 0,
-            column_types: IndexMap::new(),
-            column_data: IndexMap::new(),
-        })
-        .await?;
-        Ok(())
     }
 
     /// Wrapper over [`Client::insert_native`] to send a single block.
@@ -542,7 +672,7 @@ impl Client {
         Ok(())
     }
 
-    /// true if the Client is closed
+    /// true if the Client is closed. The cause is returned by every later call.
     pub fn is_closed(&self) -> bool {
         self.sender.is_closed()
     }
@@ -556,4 +686,39 @@ impl Client {
     pub fn subscribe_progress(&self) -> broadcast::Receiver<(Uuid, Progress)> {
         self.progress.subscribe()
     }
+}
+
+/// Waits for the end of a query and returns the first error it reported.
+async fn drain_error(receiver: &mut mpsc::Receiver<Result<Block>>) -> Option<NativeclickError> {
+    let mut error = None;
+    while let Some(block) = receiver.recv().await {
+        if let Err(e) = block {
+            error.get_or_insert(e);
+        }
+    }
+    error
+}
+
+/// Serializes `rows` into one block for columns `column_types`, failing on the first bad row.
+fn rows_to_block<T: Row>(rows: Vec<T>, column_types: &IndexMap<String, Type>) -> Result<Block> {
+    let mut block = Block {
+        info: BlockInfo::default(),
+        rows: rows.len() as u64,
+        column_types: column_types.clone(),
+        column_data: IndexMap::new(),
+    };
+    for row in rows {
+        for (key, value) in row.serialize_row(column_types)? {
+            let type_ = column_types.get(&*key).ok_or_else(|| {
+                NativeclickError::ProtocolError(format!("missing type for data, column: {key}"))
+            })?;
+            type_.validate_value(&value)?;
+            if let Some(column) = block.column_data.get_mut(&*key) {
+                column.push(value);
+            } else {
+                block.column_data.insert(key.into_owned(), vec![value]);
+            }
+        }
+    }
+    Ok(block)
 }

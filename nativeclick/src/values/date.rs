@@ -203,13 +203,81 @@ impl TryFrom<chrono::DateTime<Utc>> for DateTime {
     }
 }
 
-/// Wrapper type for Clickhouse `DateTime64` type.
+/// Wrapper type for Clickhouse `DateTime64` type: ticks of `10^-PRECISION` seconds since the
+/// Unix epoch.
+///
+/// The field holds the raw bits of ClickHouse's signed Int64: dates before 1970 are negative
+/// ticks stored as `u64` (two's complement). Use [`DateTime64::from_ticks`] and
+/// [`DateTime64::ticks`] to work with the signed value.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct DateTime64<const PRECISION: usize>(pub Tz, pub u64);
 
+impl<const PRECISION: usize> DateTime64<PRECISION> {
+    /// Builds a value from signed ticks (negative before 1970).
+    pub fn from_ticks(tz: Tz, ticks: i64) -> Self {
+        Self(tz, ticks as u64)
+    }
+
+    /// Signed ticks since the Unix epoch (negative before 1970).
+    pub fn ticks(&self) -> i64 {
+        self.1 as i64
+    }
+}
+
 /// Wrapper type for Clickhouse `DateTime64` type with dynamic precision.
+/// Same raw-bits representation as [`DateTime64`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct DynDateTime64(pub Tz, pub u64, pub usize);
+
+impl DynDateTime64 {
+    /// Builds a value from signed ticks (negative before 1970).
+    pub fn from_ticks(tz: Tz, ticks: i64, precision: usize) -> Self {
+        Self(tz, ticks as u64, precision)
+    }
+
+    /// Signed ticks since the Unix epoch (negative before 1970).
+    pub fn ticks(&self) -> i64 {
+        self.1 as i64
+    }
+}
+
+/// The only error the `TryFrom` conversions below can report: a precision above 9 or a value
+/// outside of what chrono or an `i64` of ticks can represent.
+fn out_of_range() -> TryFromIntError {
+    u8::try_from(u16::MAX).unwrap_err()
+}
+
+/// `DateTime64` ticks at `precision` to a chrono date in `tz`.
+fn ticks_to_chrono(
+    tz: Tz,
+    ticks: i64,
+    precision: usize,
+) -> Result<chrono::DateTime<Tz>, TryFromIntError> {
+    if precision > 9 {
+        return Err(out_of_range());
+    }
+    let scale = 10i64.pow(precision as u32);
+    // Euclidean division keeps the sub-second part positive for dates before 1970.
+    let nanos = ticks.rem_euclid(scale) * 10i64.pow(9 - precision as u32);
+    tz.timestamp_opt(ticks.div_euclid(scale), nanos as u32)
+        .single()
+        .ok_or_else(out_of_range)
+}
+
+/// A chrono date to `DateTime64` ticks at `precision`, truncating extra sub-second digits.
+fn chrono_to_ticks<T: TimeZone>(
+    date: &chrono::DateTime<T>,
+    precision: usize,
+) -> Result<i64, TryFromIntError> {
+    if precision > 9 {
+        return Err(out_of_range());
+    }
+    let sub = date.timestamp_subsec_nanos() as i64 / 10i64.pow(9 - precision as u32);
+    date.timestamp()
+        .checked_mul(10i64.pow(precision as u32))
+        .and_then(|x| x.checked_add(sub))
+        .ok_or_else(out_of_range)
+}
 
 impl<const PRECISION: usize> From<DateTime64<PRECISION>> for DynDateTime64 {
     fn from(value: DateTime64<PRECISION>) -> Self {
@@ -302,46 +370,14 @@ impl<const PRECISION: usize> Default for DateTime64<PRECISION> {
 }
 
 impl ToSql for chrono::DateTime<Utc> {
-    fn to_sql(self, _type_hint: Option<&Type>) -> Result<Value> {
-        Ok(Value::DateTime64(DynDateTime64(
-            chrono_tz::UTC,
-            self.timestamp_micros().try_into().map_err(|e| {
-                NativeclickError::DeserializeError(format!("failed to convert DateTime64: {e:?}"))
-            })?,
-            6,
-        )))
+    fn to_sql(self, type_hint: Option<&Type>) -> Result<Value> {
+        self.with_timezone(&chrono_tz::UTC).to_sql(type_hint)
     }
 }
 
 impl FromSql for chrono::DateTime<Utc> {
     fn from_sql(type_: &Type, value: Value) -> Result<Self> {
-        if !matches!(type_, Type::DateTime64(_, _) | Type::DateTime(_)) {
-            return Err(unexpected_type(type_));
-        }
-        match value {
-            Value::DateTime64(datetime) => {
-                let seconds = datetime.1 / 10u64.pow(datetime.2 as u32);
-                let units = datetime.1 % 10u64.pow(datetime.2 as u32);
-                let units_ns = units * 10u64.pow(9 - datetime.2 as u32);
-                let (seconds, units_ns): (i64, u32) = seconds
-                    .try_into()
-                    .and_then(|k| Ok((k, units_ns.try_into()?)))
-                    .map_err(|e| {
-                        NativeclickError::DeserializeError(format!(
-                            "failed to convert DateTime: {e:?}"
-                        ))
-                    })?;
-                Ok(datetime
-                    .0
-                    .timestamp_opt(seconds, units_ns)
-                    .unwrap()
-                    .with_timezone(&Utc))
-            }
-            Value::DateTime(date) => Ok(date.try_into().map_err(|e| {
-                NativeclickError::DeserializeError(format!("failed to convert DateTime: {e:?}"))
-            })?),
-            _ => unimplemented!(),
-        }
+        chrono::DateTime::<Tz>::from_sql(type_, value).map(|x| x.with_timezone(&Utc))
     }
 }
 
@@ -349,14 +385,7 @@ impl<const PRECISION: usize> TryFrom<DateTime64<PRECISION>> for chrono::DateTime
     type Error = TryFromIntError;
 
     fn try_from(date: DateTime64<PRECISION>) -> Result<Self, TryFromIntError> {
-        let seconds = date.1 / 10u64.pow(PRECISION as u32);
-        let units = date.1 % 10u64.pow(PRECISION as u32);
-        let units_ns = units * 10u64.pow(9 - PRECISION as u32);
-        Ok(date
-            .0
-            .timestamp_opt(seconds.try_into()?, units_ns.try_into()?)
-            .unwrap()
-            .with_timezone(&Utc))
+        Ok(ticks_to_chrono(date.0, date.ticks(), PRECISION)?.with_timezone(&Utc))
     }
 }
 
@@ -364,25 +393,24 @@ impl TryFrom<DynDateTime64> for chrono::DateTime<Utc> {
     type Error = TryFromIntError;
 
     fn try_from(date: DynDateTime64) -> Result<Self, TryFromIntError> {
-        let seconds = date.1 / 10u64.pow(date.2 as u32);
-        let units = date.1 % 10u64.pow(date.2 as u32);
-        let units_ns = units * 10u64.pow(9 - date.2 as u32);
-        Ok(date
-            .0
-            .timestamp_opt(seconds.try_into()?, units_ns.try_into()?)
-            .unwrap()
-            .with_timezone(&Utc))
+        Ok(ticks_to_chrono(date.0, date.ticks(), date.2)?.with_timezone(&Utc))
     }
 }
 
 impl ToSql for chrono::DateTime<Tz> {
-    fn to_sql(self, _type_hint: Option<&Type>) -> Result<Value> {
-        Ok(Value::DateTime64(DynDateTime64(
+    /// Sent as `DateTime64` at the precision of the column when known, microseconds otherwise.
+    fn to_sql(self, type_hint: Option<&Type>) -> Result<Value> {
+        let precision = match type_hint.map(Type::strip_null) {
+            Some(Type::DateTime64(precision, _)) => *precision,
+            _ => 6,
+        };
+        let ticks = chrono_to_ticks(&self, precision).map_err(|e| {
+            NativeclickError::DeserializeError(format!("failed to convert DateTime64: {e:?}"))
+        })?;
+        Ok(Value::DateTime64(DynDateTime64::from_ticks(
             self.timezone(),
-            self.timestamp_micros().try_into().map_err(|e| {
-                NativeclickError::DeserializeError(format!("failed to convert DateTime64: {e:?}"))
-            })?,
-            6,
+            ticks,
+            precision,
         )))
     }
 }
@@ -393,25 +421,13 @@ impl FromSql for chrono::DateTime<Tz> {
             return Err(unexpected_type(type_));
         }
         match value {
-            Value::DateTime64(datetime) => {
-                let seconds = datetime.1 / 10u64.pow(datetime.2 as u32);
-                let units = datetime.1 % 10u64.pow(datetime.2 as u32);
-                let units_ns = units * 10u64.pow(9 - datetime.2 as u32);
-                let (seconds, units_ns): (i64, u32) = seconds
-                    .try_into()
-                    .and_then(|k| Ok((k, units_ns.try_into()?)))
-                    .map_err(|e| {
-                        NativeclickError::DeserializeError(format!(
-                            "failed to convert DateTime: {e:?}"
-                        ))
-                    })?;
-                Ok(datetime.0.timestamp_opt(seconds, units_ns).unwrap())
-            }
-            Value::DateTime(date) => Ok(date.try_into().map_err(|e| {
-                NativeclickError::DeserializeError(format!("failed to convert DateTime: {e:?}"))
-            })?),
-            _ => unimplemented!(),
+            Value::DateTime64(datetime) => datetime.try_into(),
+            Value::DateTime(date) => date.try_into(),
+            _ => return Err(unexpected_type(type_)),
         }
+        .map_err(|e| {
+            NativeclickError::DeserializeError(format!("failed to convert DateTime: {e:?}"))
+        })
     }
 }
 
@@ -419,11 +435,10 @@ impl<const PRECISION: usize> TryFrom<chrono::DateTime<Utc>> for DateTime64<PRECI
     type Error = TryFromIntError;
 
     fn try_from(other: chrono::DateTime<Utc>) -> Result<Self, TryFromIntError> {
-        let seconds: u64 = other.timestamp().try_into()?;
-        let sub_seconds: u64 = other.timestamp_subsec_nanos() as u64;
-        let total =
-            seconds * 10u64.pow(PRECISION as u32) + sub_seconds / 10u64.pow(9 - PRECISION as u32);
-        Ok(Self(chrono_tz::UTC, total))
+        Ok(Self::from_ticks(
+            chrono_tz::UTC,
+            chrono_to_ticks(&other, PRECISION)?,
+        ))
     }
 }
 
@@ -432,11 +447,11 @@ impl DynDateTime64 {
         other: chrono::DateTime<Utc>,
         precision: usize,
     ) -> Result<Self, TryFromIntError> {
-        let seconds: u64 = other.timestamp().try_into()?;
-        let sub_seconds: u64 = other.timestamp_subsec_nanos() as u64;
-        let total =
-            seconds * 10u64.pow(precision as u32) + sub_seconds / 10u64.pow(9 - precision as u32);
-        Ok(Self(chrono_tz::UTC, total, precision))
+        Ok(Self::from_ticks(
+            chrono_tz::UTC,
+            chrono_to_ticks(&other, precision)?,
+            precision,
+        ))
     }
 }
 
@@ -444,13 +459,7 @@ impl<const PRECISION: usize> TryFrom<DateTime64<PRECISION>> for chrono::DateTime
     type Error = TryFromIntError;
 
     fn try_from(date: DateTime64<PRECISION>) -> Result<Self, TryFromIntError> {
-        let seconds = date.1 / 10u64.pow(PRECISION as u32);
-        let units = date.1 % 10u64.pow(PRECISION as u32);
-        let units_ns = units * 10u64.pow(9 - PRECISION as u32);
-        Ok(date
-            .0
-            .timestamp_opt(seconds.try_into()?, units_ns.try_into()?)
-            .unwrap())
+        ticks_to_chrono(date.0, date.ticks(), PRECISION)
     }
 }
 
@@ -458,13 +467,7 @@ impl TryFrom<DynDateTime64> for chrono::DateTime<Tz> {
     type Error = TryFromIntError;
 
     fn try_from(date: DynDateTime64) -> Result<Self, TryFromIntError> {
-        let seconds = date.1 / 10u64.pow(date.2 as u32);
-        let units = date.1 % 10u64.pow(date.2 as u32);
-        let units_ns = units * 10u64.pow(9 - date.2 as u32);
-        Ok(date
-            .0
-            .timestamp_opt(seconds.try_into()?, units_ns.try_into()?)
-            .unwrap())
+        ticks_to_chrono(date.0, date.ticks(), date.2)
     }
 }
 
@@ -472,11 +475,10 @@ impl<const PRECISION: usize> TryFrom<chrono::DateTime<Tz>> for DateTime64<PRECIS
     type Error = TryFromIntError;
 
     fn try_from(other: chrono::DateTime<Tz>) -> Result<Self, TryFromIntError> {
-        let seconds: u64 = other.timestamp().try_into()?;
-        let sub_seconds: u64 = other.timestamp_subsec_nanos() as u64;
-        let total =
-            seconds * 10u64.pow(PRECISION as u32) + sub_seconds / 10u64.pow(9 - PRECISION as u32);
-        Ok(Self(other.timezone(), total))
+        Ok(Self::from_ticks(
+            other.timezone(),
+            chrono_to_ticks(&other, PRECISION)?,
+        ))
     }
 }
 
@@ -485,11 +487,11 @@ impl DynDateTime64 {
         other: chrono::DateTime<Tz>,
         precision: usize,
     ) -> Result<Self, TryFromIntError> {
-        let seconds: u64 = other.timestamp().try_into()?;
-        let sub_seconds: u64 = other.timestamp_subsec_nanos() as u64;
-        let total =
-            seconds * 10u64.pow(precision as u32) + sub_seconds / 10u64.pow(9 - precision as u32);
-        Ok(Self(other.timezone(), total, precision))
+        Ok(Self::from_ticks(
+            other.timezone(),
+            chrono_to_ticks(&other, precision)?,
+            precision,
+        ))
     }
 }
 
@@ -497,14 +499,7 @@ impl<const PRECISION: usize> TryFrom<DateTime64<PRECISION>> for chrono::DateTime
     type Error = TryFromIntError;
 
     fn try_from(date: DateTime64<PRECISION>) -> Result<Self, TryFromIntError> {
-        let seconds = date.1 / 10u64.pow(PRECISION as u32);
-        let units = date.1 % 10u64.pow(PRECISION as u32);
-        let units_ns = units * 10u64.pow(9 - PRECISION as u32);
-        Ok(date
-            .0
-            .timestamp_opt(seconds.try_into()?, units_ns.try_into()?)
-            .unwrap()
-            .fixed_offset())
+        Ok(ticks_to_chrono(date.0, date.ticks(), PRECISION)?.fixed_offset())
     }
 }
 
@@ -512,14 +507,7 @@ impl TryFrom<DynDateTime64> for chrono::DateTime<FixedOffset> {
     type Error = TryFromIntError;
 
     fn try_from(date: DynDateTime64) -> Result<Self, TryFromIntError> {
-        let seconds = date.1 / 10u64.pow(date.2 as u32);
-        let units = date.1 % 10u64.pow(date.2 as u32);
-        let units_ns = units * 10u64.pow(9 - date.2 as u32);
-        Ok(date
-            .0
-            .timestamp_opt(seconds.try_into()?, units_ns.try_into()?)
-            .unwrap()
-            .fixed_offset())
+        Ok(ticks_to_chrono(date.0, date.ticks(), date.2)?.fixed_offset())
     }
 }
 
@@ -562,8 +550,8 @@ mod chrono_tests {
 
     #[test]
     fn test_datetime64() {
-        for i in (0..30000u64).map(|x| x * 10000) {
-            let date = DateTime64::<6>(UTC, i);
+        for i in (-30000..30000i64).map(|x| x * 10000) {
+            let date = DateTime64::<6>::from_ticks(UTC, i);
             let chrono_date: chrono::DateTime<Tz> = date.try_into().unwrap();
             let new_date = DateTime64::try_from(chrono_date).unwrap();
             assert_eq!(new_date, date);
@@ -572,10 +560,13 @@ mod chrono_tests {
 
     #[test]
     fn test_datetime64_precision() {
-        for i in (0..30000u64).map(|x| x * 10000) {
-            let date = DateTime64::<6>(UTC, i);
+        for i in (-30000..30000i64).map(|x| x * 10000) {
+            let date = DateTime64::<6>::from_ticks(UTC, i);
             let date_value = date.to_sql(None).unwrap();
-            assert_eq!(date_value, Value::DateTime64(DynDateTime64(UTC, i, 6)));
+            assert_eq!(
+                date_value,
+                Value::DateTime64(DynDateTime64::from_ticks(UTC, i, 6))
+            );
             let chrono_date: chrono::DateTime<Utc> =
                 FromSql::from_sql(&Type::DateTime64(6, UTC), date_value).unwrap();
             let new_date = DateTime64::try_from(chrono_date).unwrap();
@@ -594,7 +585,7 @@ mod chrono_tests {
             let date = match date {
                 Value::DateTime64(mut datetime) => {
                     datetime.2 -= 3;
-                    datetime.1 /= 1000;
+                    datetime.1 = (datetime.ticks() / 1000) as u64;
                     Value::DateTime64(datetime)
                 }
                 _ => unimplemented!(),
@@ -621,5 +612,63 @@ mod chrono_tests {
         let new_chrono_date: chrono::DateTime<Tz> = date.try_into().unwrap();
 
         assert_eq!(new_chrono_date, chrono_date);
+    }
+
+    /// Dates before 1970 are negative ticks; the sub-second part must stay positive.
+    #[test]
+    fn test_datetime64_before_epoch() {
+        let chrono_date = Utc.with_ymd_and_hms(1960, 1, 1, 0, 0, 0).unwrap()
+            + chrono::Duration::milliseconds(250);
+        let date = DateTime64::<3>::try_from(chrono_date).unwrap();
+        assert_eq!(date.ticks(), -315_619_199_750);
+        let back: chrono::DateTime<Utc> = date.try_into().unwrap();
+        assert_eq!(back, chrono_date);
+
+        // -1 tick is 1969-12-31 23:59:59.999, not a panic.
+        let back: chrono::DateTime<Utc> = DateTime64::<3>::from_ticks(UTC, -1).try_into().unwrap();
+        assert_eq!(
+            back,
+            Utc.with_ymd_and_hms(1969, 12, 31, 23, 59, 59).unwrap()
+                + chrono::Duration::milliseconds(999)
+        );
+    }
+
+    /// Every precision ClickHouse allows (0..=9) round-trips, and anything above is an error.
+    #[test]
+    fn test_datetime64_all_precisions() {
+        let chrono_date = Utc.with_ymd_and_hms(1925, 6, 7, 8, 9, 10).unwrap()
+            + chrono::Duration::nanoseconds(123_456_789);
+        for precision in 0..=9 {
+            let date = DynDateTime64::try_from_utc(chrono_date, precision).unwrap();
+            let back: chrono::DateTime<Utc> = date.try_into().unwrap();
+            let truncated =
+                123_456_789 / 10i64.pow(9 - precision as u32) * 10i64.pow(9 - precision as u32);
+            assert_eq!(
+                back,
+                Utc.with_ymd_and_hms(1925, 6, 7, 8, 9, 10).unwrap()
+                    + chrono::Duration::nanoseconds(truncated)
+            );
+        }
+        assert!(DynDateTime64::try_from_utc(chrono_date, 10).is_err());
+        assert!(chrono::DateTime::<Utc>::try_from(DynDateTime64(UTC, 1, 12)).is_err());
+        assert!(
+            chrono::DateTime::<Utc>::try_from(DynDateTime64::from_ticks(UTC, i64::MAX, 0)).is_err()
+        );
+    }
+
+    /// `ToSql` follows the precision of the target column instead of always using 6.
+    #[test]
+    fn test_chrono_to_sql_uses_column_precision() {
+        let chrono_date = Utc.with_ymd_and_hms(1950, 1, 1, 0, 0, 1).unwrap();
+        let value = chrono_date.to_sql(Some(&Type::DateTime64(3, UTC))).unwrap();
+        assert_eq!(
+            value,
+            Value::DateTime64(DynDateTime64::from_ticks(UTC, -631_151_999_000, 3))
+        );
+        let value = chrono_date.to_sql(None).unwrap();
+        assert_eq!(
+            value,
+            Value::DateTime64(DynDateTime64::from_ticks(UTC, -631_151_999_000_000, 6))
+        );
     }
 }

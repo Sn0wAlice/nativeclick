@@ -871,39 +871,23 @@ impl Type {
     }
 
     pub(crate) fn validate(&self) -> Result<()> {
+        fn check_scale(name: &str, scale: usize, max: usize) -> Result<()> {
+            if scale > max {
+                return Err(NativeclickError::TypeParseError(format!(
+                    "scale out of bounds for {name}({scale}), must be in range (0..={max})"
+                )));
+            }
+            Ok(())
+        }
+
         match self {
-            Type::Decimal32(precision) => {
-                if *precision == 0 || *precision > 9 {
-                    return Err(NativeclickError::TypeParseError(format!(
-                        "precision out of bounds for Decimal32({}) must be in range (1..=9)",
-                        *precision
-                    )));
-                }
-            }
-            Type::DateTime64(precision, _) | Type::Decimal64(precision) => {
-                if *precision == 0 || *precision > 18 {
-                    return Err(NativeclickError::TypeParseError(format!(
-                        "precision out of bounds for Decimal64/DateTime64({}) must be in range (1..=18)",
-                        *precision
-                    )));
-                }
-            }
-            Type::Decimal128(precision) => {
-                if *precision == 0 || *precision > 38 {
-                    return Err(NativeclickError::TypeParseError(format!(
-                        "precision out of bounds for Decimal128({}) must be in range (1..=38)",
-                        *precision
-                    )));
-                }
-            }
-            Type::Decimal256(precision) => {
-                if *precision == 0 || *precision > 76 {
-                    return Err(NativeclickError::TypeParseError(format!(
-                        "precision out of bounds for Decimal256({}) must be in range (1..=76)",
-                        *precision
-                    )));
-                }
-            }
+            // The argument stored in these variants is the scale (digits after the point),
+            // which may be 0. Its upper bound is the max precision of the underlying integer.
+            Type::Decimal32(scale) => check_scale("Decimal32", *scale, 9)?,
+            Type::Decimal64(scale) => check_scale("Decimal64", *scale, 18)?,
+            Type::Decimal128(scale) => check_scale("Decimal128", *scale, 38)?,
+            Type::Decimal256(scale) => check_scale("Decimal256", *scale, 76)?,
+            Type::DateTime64(precision, _) => check_scale("DateTime64", *precision, 9)?,
             Type::LowCardinality(inner) => match inner.strip_null() {
                 Type::String
                 | Type::FixedString(_)

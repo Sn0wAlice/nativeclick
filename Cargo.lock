@@ -717,7 +717,7 @@ dependencies = [
 
 [[package]]
 name = "nativeclick"
-version = "0.15.3"
+version = "0.26.9"
 dependencies = [
  "async-trait",
  "bb8",
@@ -752,7 +752,7 @@ dependencies = [
 
 [[package]]
 name = "nativeclick_derive"
-version = "0.15.0"
+version = "0.26.9"
 dependencies = [
  "proc-macro2",
  "quote",

@@ -53,7 +53,15 @@ impl Serializer for SizedSerializer {
                 Value::Ipv6(x) => writer.write_all(&x.octets()[..]).await?,
                 Value::Enum8(x) => writer.write_i8(*x).await?,
                 Value::Enum16(x) => writer.write_i16_le(*x).await?,
-                _ => unimplemented!(),
+                Value::Bool(x) => writer.write_u8(*x as u8).await?,
+                Value::Date32(x) => writer.write_i32_le(x.0).await?,
+                Value::Time(x) => writer.write_i32_le(*x).await?,
+                Value::Time64(_, x) => writer.write_i64_le(*x).await?,
+                x => {
+                    return Err(crate::NativeclickError::SerializeError(format!(
+                        "cannot write {x:?} as {type_}"
+                    )));
+                }
             }
         }
         Ok(())

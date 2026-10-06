@@ -6,6 +6,16 @@ use super::{Serializer, SerializerState, Type};
 pub struct NullableSerializer;
 
 impl Serializer for NullableSerializer {
+    async fn write_prefix<W: ClickhouseWrite>(
+        type_: &Type,
+        values: &[Value],
+        writer: &mut W,
+        state: &mut SerializerState,
+    ) -> Result<()> {
+        let inner = type_.unnull().unwrap_or(type_);
+        inner.serialize_prefix(values, writer, state).await
+    }
+
     async fn write<W: ClickhouseWrite>(
         type_: &Type,
         values: Vec<Value>,

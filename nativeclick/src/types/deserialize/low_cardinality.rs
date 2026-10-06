@@ -73,24 +73,17 @@ impl Deserializer for LowCardinalityDeserializer {
                             global_dictionary.is_none() || needs_update_dictionary;
                         if needs_global_dictionary && interior_needs_update_dictionary {
                             let index_count = reader.read_u64_le().await?;
-                            let new_index = inner
-                                .deserialize_column(reader, index_count as usize, state)
-                                .await?;
+                            let new_index =
+                                read_dictionary(inner, reader, index_count as usize, state).await?;
                             global_dictionary = Some(new_index); // should this be append?
                         }
 
-                        // println!("index = {:?}", global_dictionary);
-
                         if has_additional_keys {
                             let key_count = reader.read_u64_le().await?;
-                            // println!("keyct = {:?}", key_count);
                             additional_keys = Some(
-                                inner
-                                    .deserialize_column(reader, key_count as usize, state)
-                                    .await?,
+                                read_dictionary(inner, reader, key_count as usize, state).await?,
                             )
                         }
-                        // println!("additional_keys = {:?}", additional_keys);
 
                         num_pending_rows = reader.read_u64_le().await? as usize;
                     }
@@ -181,4 +174,17 @@ impl Deserializer for LowCardinalityDeserializer {
             _ => unimplemented!(),
         })
     }
+}
+
+/// Dictionaries keep varint strings even when the rest of the block uses the size-stream layout.
+async fn read_dictionary<R: ClickhouseRead>(
+    type_: &Type,
+    reader: &mut R,
+    rows: usize,
+    state: &mut DeserializerState,
+) -> Result<Vec<Value>> {
+    let size_stream = std::mem::replace(&mut state.string_size_stream, false);
+    let keys = type_.deserialize_column(reader, rows, state).await;
+    state.string_size_stream = size_stream;
+    keys
 }

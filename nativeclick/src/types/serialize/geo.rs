@@ -7,11 +7,12 @@ pub struct PointSerializer;
 impl Serializer for PointSerializer {
     async fn write_prefix<W: ClickhouseWrite>(
         _type_: &Type,
+        _values: &[Value],
         writer: &mut W,
         state: &mut SerializerState,
     ) -> Result<()> {
         for _ in 0..2 {
-            Type::Float64.serialize_prefix(writer, state).await?;
+            Type::Float64.serialize_prefix(&[], writer, state).await?;
         }
         Ok(())
     }

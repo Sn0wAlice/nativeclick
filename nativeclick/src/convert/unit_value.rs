@@ -18,7 +18,7 @@ impl<T: FromSql + ToSql> Row for UnitValue<T> {
             return Err(NativeclickError::MissingField("<unit>"));
         }
         let item = map.into_iter().next().unwrap();
-        T::from_sql(item.1, item.2).map(UnitValue)
+        crate::from_sql_resolved(item.1, item.2).map(UnitValue)
     }
 
     fn serialize_row(

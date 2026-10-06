@@ -10,13 +10,8 @@ impl Deserializer for TupleDeserializer {
         reader: &mut R,
         state: &mut DeserializerState,
     ) -> Result<()> {
-        match type_ {
-            Type::Tuple(inner) => {
-                for item in inner {
-                    item.deserialize_prefix(reader, state).await?;
-                }
-            }
-            _ => unimplemented!(),
+        for item in type_.tuple_types().unwrap_or_default() {
+            item.deserialize_prefix(reader, state).await?;
         }
         Ok(())
     }
@@ -27,23 +22,22 @@ impl Deserializer for TupleDeserializer {
         rows: usize,
         state: &mut DeserializerState,
     ) -> Result<Vec<Value>> {
-        let types = type_.unwrap_tuple();
-        let mut tuples = vec![Value::Tuple(Vec::with_capacity(types.len())); rows];
-        for type_ in types {
-            for (i, value) in type_
-                .deserialize_column(reader, rows, state)
-                .await?
-                .into_iter()
-                .enumerate()
-            {
-                match &mut tuples[i] {
-                    Value::Tuple(values) => {
-                        values.push(value);
-                    }
-                    _ => unimplemented!(),
-                }
-            }
+        let mut columns = vec![];
+        for type_ in type_.tuple_types().unwrap_or_default() {
+            columns.push(type_.deserialize_column(reader, rows, state).await?);
         }
-        Ok(tuples)
+        Ok(zip_tuples(columns, rows))
     }
+}
+
+/// Rows of tuples from one column per element.
+pub(crate) fn zip_tuples(columns: Vec<Vec<Value>>, rows: usize) -> Vec<Value> {
+    let width = columns.len();
+    let mut tuples = vec![Vec::with_capacity(width); rows];
+    for column in columns {
+        for (tuple, value) in tuples.iter_mut().zip(column) {
+            tuple.push(value);
+        }
+    }
+    tuples.into_iter().map(Value::Tuple).collect()
 }

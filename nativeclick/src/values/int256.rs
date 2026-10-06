@@ -12,6 +12,41 @@ use crate::{
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct i256(pub [u8; 32]);
 
+impl i256 {
+    /// Decimal text of the signed two's complement value (big-endian bytes).
+    pub(crate) fn to_decimal(self) -> String {
+        let negative = self.0[0] & 0x80 != 0;
+        let mut bytes = self.0;
+        if negative {
+            // two's complement negation
+            let mut carry = true;
+            for byte in bytes.iter_mut().rev() {
+                let (value, overflow) = (!*byte).overflowing_add(carry as u8);
+                *byte = value;
+                carry = carry && overflow;
+            }
+        }
+        let mut digits = vec![];
+        while bytes.iter().any(|x| *x != 0) {
+            let mut remainder = 0u32;
+            for byte in bytes.iter_mut() {
+                let current = (remainder << 8) | *byte as u32;
+                *byte = (current / 10) as u8;
+                remainder = current % 10;
+            }
+            digits.push(b'0' + remainder as u8);
+        }
+        if digits.is_empty() {
+            digits.push(b'0');
+        }
+        if negative {
+            digits.push(b'-');
+        }
+        digits.reverse();
+        String::from_utf8(digits).unwrap()
+    }
+}
+
 impl From<i256> for u256 {
     fn from(i: i256) -> Self {
         u256(i.0)

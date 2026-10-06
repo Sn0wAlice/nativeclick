@@ -1,7 +1,7 @@
 [package]
 name = "nativeclick"
-version = "0.15.3"
-authors = ["Protryon <max.bruce12@gmail.com>"]
+version = "0.26.9"
+authors = ["Protryon <max.bruce12@gmail.com>", "Sn0wAlice <snow.alice@pm.me>"]
 edition = "2024"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/Sn0wAlice/nativeclick"
@@ -38,7 +38,7 @@ futures-util = { version = "0.3", default-features = false, features = ["std"] }
 tokio-stream = "0.1"
 lz4 = { version = "1.28", optional = true }
 zstd = { version = "0.14", optional = true }
-nativeclick_derive = { version = "=0.15.0", optional = true, path = "../nativeclick_derive" }
+nativeclick_derive = { version = "=0.26.9", optional = true, path = "../nativeclick_derive" }
 cityhash-rs = "1.0"
 bb8 = { version = "0.9", optional = true }
 refinery-core = { version = "0.9", optional = true }

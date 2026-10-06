@@ -8,10 +8,12 @@ pub mod test_geo;
 pub mod test_into;
 pub mod test_lock;
 pub mod test_nested;
+pub mod test_options;
 pub mod test_ordering;
 pub mod test_raw_string;
 pub mod test_robustness;
 pub mod test_serialize;
+pub mod test_types;
 
 use nativeclick::{Client, ClientOptions};
 

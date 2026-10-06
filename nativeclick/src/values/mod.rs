@@ -15,6 +15,7 @@ mod clickhouse_uuid;
 mod date;
 #[cfg(feature = "rust_decimal")]
 mod decimal;
+mod dynamic;
 mod fixed_point;
 mod geo;
 mod int256;
@@ -23,6 +24,7 @@ mod ip;
 pub use bfloat16::*;
 pub use bytes::*;
 pub use date::*;
+pub use dynamic::*;
 pub use fixed_point::*;
 pub use geo::*;
 pub use int256::*;
@@ -36,6 +38,7 @@ mod tests;
 /// Use this if you want dynamically typed queries.
 #[derive(Clone)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[non_exhaustive]
 pub enum Value {
     Int8(i8),
     Int16(i16),
@@ -83,9 +86,20 @@ pub enum Value {
     Ipv6(Ipv6),
 
     Point(Point),
+    /// Also the value of `LineString` and `MultiPoint` columns.
     Ring(Ring),
+    /// Also the value of `MultiLineString` columns.
     Polygon(Polygon),
     MultiPolygon(MultiPolygon),
+
+    Bool(bool),
+    Date32(Date32),
+    /// `Time`: seconds, may be negative or exceed a day.
+    Time(i32),
+    /// `Time64(precision)`: ticks of `10^-precision` seconds.
+    Time64(usize, i64),
+    /// A row of a `Variant`, `Dynamic` or `Geometry` column: the value with its actual type.
+    Dynamic(Box<DynamicValue>),
 }
 
 impl PartialEq for Value {
@@ -126,6 +140,11 @@ impl PartialEq for Value {
             (Self::Ring(l0), Self::Ring(r0)) => l0 == r0,
             (Self::Polygon(l0), Self::Polygon(r0)) => l0 == r0,
             (Self::MultiPolygon(l0), Self::MultiPolygon(r0)) => l0 == r0,
+            (Self::Bool(l0), Self::Bool(r0)) => l0 == r0,
+            (Self::Date32(l0), Self::Date32(r0)) => l0 == r0,
+            (Self::Time(l0), Self::Time(r0)) => l0 == r0,
+            (Self::Time64(l0, l1), Self::Time64(r0, r1)) => l0 == r0 && l1 == r1,
+            (Self::Dynamic(l0), Self::Dynamic(r0)) => l0 == r0,
             _ => core::mem::discriminant(self) == core::mem::discriminant(other),
         }
     }
@@ -188,6 +207,14 @@ impl Hash for Value {
             Value::Ring(x) => ::core::hash::Hash::hash(x, state),
             Value::Polygon(x) => ::core::hash::Hash::hash(x, state),
             Value::MultiPolygon(x) => ::core::hash::Hash::hash(x, state),
+            Value::Bool(x) => ::core::hash::Hash::hash(x, state),
+            Value::Date32(x) => ::core::hash::Hash::hash(x, state),
+            Value::Time(x) => ::core::hash::Hash::hash(x, state),
+            Value::Time64(x, y) => {
+                ::core::hash::Hash::hash(x, state);
+                ::core::hash::Hash::hash(y, state)
+            }
+            Value::Dynamic(x) => ::core::hash::Hash::hash(x, state),
 
             _ => {}
         }
@@ -207,7 +234,7 @@ impl Value {
             Value::UInt16(x) => *x as usize,
             Value::UInt32(x) => *x as usize,
             Value::UInt64(x) => *x as usize,
-            _ => unimplemented!(),
+            _ => usize::MAX,
         }
     }
 
@@ -247,9 +274,9 @@ impl Value {
         }
     }
 
-    /// Converts a [`Value`] to a `T` type by calling `T::from_sql`.
+    /// Converts a [`Value`] to a `T` type, see [`crate::from_sql_resolved`].
     pub fn to_value<T: FromSql>(self, type_: &Type) -> Result<T> {
-        T::from_sql(type_, self)
+        crate::from_sql_resolved(type_, self)
     }
 
     /// Converts a `T` type to a [`Value`] by calling `T::to_sql`.
@@ -284,8 +311,8 @@ impl Value {
             Value::Date(_) => Type::Date,
             Value::DateTime(time) => Type::DateTime(time.0),
             Value::DateTime64(x) => Type::DateTime64(x.2, x.0),
-            Value::Enum8(_) => unimplemented!(),
-            Value::Enum16(_) => unimplemented!(),
+            Value::Enum8(x) => Type::Enum8(vec![(x.to_string(), *x)]),
+            Value::Enum16(x) => Type::Enum16(vec![(x.to_string(), *x)]),
             Value::Array(x) => Type::Array(Box::new(
                 x.first().map(|x| x.guess_type()).unwrap_or(Type::String),
             )),
@@ -302,8 +329,27 @@ impl Value {
             Value::Ring(_) => Type::Ring,
             Value::Polygon(_) => Type::Polygon,
             Value::MultiPolygon(_) => Type::MultiPolygon,
+            Value::Bool(_) => Type::Bool,
+            Value::Date32(_) => Type::Date32,
+            Value::Time(_) => Type::Time,
+            Value::Time64(precision, _) => Type::Time64(*precision),
+            Value::Dynamic(x) => x.type_.clone(),
         }
     }
+}
+
+/// Writes the integer `digits` (optionally negative) with `scale` digits after the point.
+fn write_decimal(f: &mut fmt::Formatter<'_>, digits: &str, scale: usize) -> fmt::Result {
+    let (sign, digits) = match digits.strip_prefix('-') {
+        Some(digits) => ("-", digits),
+        None => ("", digits),
+    };
+    if scale == 0 {
+        return write!(f, "{sign}{digits}");
+    }
+    let digits = format!("{digits:0>width$}", width = scale + 1);
+    let (int, fraction) = digits.split_at(digits.len() - scale);
+    write!(f, "{sign}{int}.{fraction}")
 }
 
 fn escape_string(f: &mut fmt::Formatter<'_>, from: impl AsRef<[u8]>) -> fmt::Result {
@@ -354,39 +400,10 @@ impl fmt::Display for Value {
             Value::Float32(x) => write!(f, "{x}"),
             Value::Float64(x) => write!(f, "{x}"),
             Value::BFloat16(x) => write!(f, "{x}"),
-            Value::Decimal32(precision, value) => {
-                let raw_value = value.to_string();
-                if raw_value.len() < *precision {
-                    write!(f, "{raw_value}")
-                } else {
-                    let pre = &raw_value[..raw_value.len() - precision];
-                    let fraction = &raw_value[raw_value.len() - precision..];
-                    write!(f, "{pre}.{fraction}")
-                }
-            }
-            Value::Decimal64(precision, value) => {
-                let raw_value = value.to_string();
-                if raw_value.len() < *precision {
-                    write!(f, "{raw_value}")
-                } else {
-                    let pre = &raw_value[..raw_value.len() - precision];
-                    let fraction = &raw_value[raw_value.len() - precision..];
-                    write!(f, "{pre}.{fraction}")
-                }
-            }
-            Value::Decimal128(precision, value) => {
-                let raw_value = value.to_string();
-                if raw_value.len() < *precision {
-                    write!(f, "{raw_value}")
-                } else {
-                    let pre = &raw_value[..raw_value.len() - precision];
-                    let fraction = &raw_value[raw_value.len() - precision..];
-                    write!(f, "{pre}.{fraction}")
-                }
-            }
-            Value::Decimal256(..) => {
-                unimplemented!("Decimal256 display not implemented");
-            }
+            Value::Decimal32(scale, value) => write_decimal(f, &value.to_string(), *scale),
+            Value::Decimal64(scale, value) => write_decimal(f, &value.to_string(), *scale),
+            Value::Decimal128(scale, value) => write_decimal(f, &value.to_string(), *scale),
+            Value::Decimal256(scale, value) => write_decimal(f, &value.to_decimal(), *scale),
             Value::String(string) => {
                 write!(f, "'")?;
                 escape_string(f, string)?;
@@ -457,6 +474,26 @@ impl fmt::Display for Value {
             Value::Ring(x) => write!(f, "{x:?}"),
             Value::Polygon(x) => write!(f, "{x:?}"),
             Value::MultiPolygon(x) => write!(f, "{x:?}"),
+            Value::Bool(x) => write!(f, "{x}"),
+            Value::Date32(date) => {
+                let chrono_date: NaiveDate = (*date).try_into().map_err(|_| fmt::Error)?;
+                write!(f, "{}", chrono_date.format("toDate32('%Y-%m-%d')"))
+            }
+            Value::Time(x) => write!(f, "toTime({x})"),
+            Value::Time64(precision, x) => {
+                let scale = 10i64.pow(*precision as u32);
+                let sign = if *x < 0 { "-" } else { "" };
+                let (seconds, fraction) = (
+                    x.unsigned_abs() / scale as u64,
+                    x.unsigned_abs() % scale as u64,
+                );
+                write!(
+                    f,
+                    "toTime64('{sign}{seconds}.{fraction:0width$}', {precision})",
+                    width = *precision
+                )
+            }
+            Value::Dynamic(x) => write!(f, "CAST({}, '{}')", x.value, x.type_),
         }
     }
 }

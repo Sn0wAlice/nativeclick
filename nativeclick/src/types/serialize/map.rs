@@ -9,19 +9,23 @@ pub struct MapSerializer;
 impl Serializer for MapSerializer {
     async fn write_prefix<W: ClickhouseWrite>(
         type_: &Type,
+        values: &[Value],
         writer: &mut W,
         state: &mut SerializerState,
     ) -> Result<()> {
-        match type_ {
-            Type::Map(key, value) => {
-                let nested = Type::Array(Box::new(Type::Tuple(vec![
-                    (**key).clone(),
-                    (**value).clone(),
-                ])));
-                nested.serialize_prefix(writer, state).await?;
+        // Array(Tuple(key, value)): the prefixes of key then value.
+        let (key, value) = type_.unwrap_map();
+        let (mut keys, mut items) = (vec![], vec![]);
+        if key.contains_dynamic() || value.contains_dynamic() {
+            for map in values {
+                if let Value::Map(k, v) = map {
+                    keys.extend(k.iter().cloned());
+                    items.extend(v.iter().cloned());
+                }
             }
-            _ => unimplemented!(),
         }
+        key.serialize_prefix(&keys, writer, state).await?;
+        value.serialize_prefix(&items, writer, state).await?;
         Ok(())
     }
 

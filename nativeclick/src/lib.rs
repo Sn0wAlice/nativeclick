@@ -1,9 +1,14 @@
 #![doc = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/README.md"))]
 
-/// Clickhouse major version
-pub const VERSION_MAJOR: u64 = 22;
-/// Clickhouse minor version
+/// Clickhouse major version this crate targets, sent to the server as the client version.
+/// The crate version is `0.MAJOR.MINOR` (0.26.9 targets ClickHouse 26.9).
+pub const VERSION_MAJOR: u64 = 26;
+/// Clickhouse minor version this crate targets, sent to the server as the client version.
 pub const VERSION_MINOR: u64 = 9;
+
+/// Oldest ClickHouse version this release is tested against: the targeted version and the 10
+/// releases before it are supported.
+pub const MIN_SUPPORTED_VERSION: (u64, u64) = (25, 11);
 
 pub mod block;
 mod client;

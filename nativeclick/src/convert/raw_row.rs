@@ -84,7 +84,7 @@ impl RawRow {
             .unwrap()
             .take()
             .ok_or(NativeclickError::DoubleFetch)?;
-        T::from_sql(&type_, value)
+        crate::from_sql_resolved(&type_, value)
     }
 
     /// Deserializes a value from the row.

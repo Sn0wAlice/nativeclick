@@ -12,6 +12,7 @@ pub struct LowCardinalitySerializer;
 impl Serializer for LowCardinalitySerializer {
     async fn write_prefix<W: ClickhouseWrite>(
         _type_: &Type,
+        _values: &[Value],
         writer: &mut W,
         _state: &mut SerializerState,
     ) -> Result<()> {
@@ -61,9 +62,13 @@ impl Serializer for LowCardinalitySerializer {
 
         writer.write_u64_le(keys.len() as u64).await?;
 
-        inner_type
+        // Dictionaries keep varint strings even with the size-stream layout elsewhere.
+        let size_stream = std::mem::replace(&mut state.string_size_stream, false);
+        let written = inner_type
             .serialize_column(keys.iter().copied().cloned().collect(), writer, state)
-            .await?;
+            .await;
+        state.string_size_stream = size_stream;
+        written?;
 
         writer.write_u64_le(values.len() as u64).await?;
         for value in &values {

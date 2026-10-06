@@ -16,9 +16,13 @@ impl ToSql for u8 {
     }
 }
 
+/// A `Bool` into `Bool` columns, a 0/1 `UInt8` otherwise (as before `Bool` had its own type).
 impl ToSql for bool {
-    fn to_sql(self, _type_hint: Option<&Type>) -> Result<Value> {
-        Ok(Value::UInt8(self as u8))
+    fn to_sql(self, type_hint: Option<&Type>) -> Result<Value> {
+        match type_hint.map(|x| x.strip_null().strip_low_cardinality()) {
+            Some(Type::Bool) => Ok(Value::Bool(self)),
+            _ => Ok(Value::UInt8(self as u8)),
+        }
     }
 }
 
@@ -46,15 +50,49 @@ impl ToSql for u128 {
     }
 }
 
+/// The type an enum-capable value is written as, looking through Nullable/LowCardinality.
+fn enum_hint(type_hint: Option<&Type>) -> Option<&Type> {
+    type_hint
+        .map(|x| x.strip_null().strip_low_cardinality())
+        .filter(|x| matches!(x, Type::Enum8(_) | Type::Enum16(_)))
+}
+
+/// The raw value of an `Enum8` when written into one.
 impl ToSql for i8 {
-    fn to_sql(self, _type_hint: Option<&Type>) -> Result<Value> {
-        Ok(Value::Int8(self))
+    fn to_sql(self, type_hint: Option<&Type>) -> Result<Value> {
+        Ok(match enum_hint(type_hint) {
+            Some(Type::Enum8(_)) => Value::Enum8(self),
+            _ => Value::Int8(self),
+        })
     }
 }
 
+/// The raw value of an `Enum16` when written into one.
 impl ToSql for i16 {
-    fn to_sql(self, _type_hint: Option<&Type>) -> Result<Value> {
-        Ok(Value::Int16(self))
+    fn to_sql(self, type_hint: Option<&Type>) -> Result<Value> {
+        Ok(match enum_hint(type_hint) {
+            Some(Type::Enum16(_)) => Value::Enum16(self),
+            _ => Value::Int16(self),
+        })
+    }
+}
+
+/// Writes the value named `name` into an enum column.
+fn enum_value(type_: &Type, name: &str) -> Result<Value> {
+    let missing =
+        || crate::NativeclickError::SerializeError(format!("'{name}' is not a value of {type_}"));
+    match type_ {
+        Type::Enum8(items) => items
+            .iter()
+            .find(|x| x.0 == name)
+            .map(|x| Value::Enum8(x.1))
+            .ok_or_else(missing),
+        Type::Enum16(items) => items
+            .iter()
+            .find(|x| x.0 == name)
+            .map(|x| Value::Enum16(x.1))
+            .ok_or_else(missing),
+        _ => Err(missing()),
     }
 }
 
@@ -95,15 +133,23 @@ impl ToSql for bf16 {
     }
 }
 
+/// The named value when written into an enum column.
 impl ToSql for String {
-    fn to_sql(self, _type_hint: Option<&Type>) -> Result<Value> {
-        Ok(Value::String(self.into_bytes()))
+    fn to_sql(self, type_hint: Option<&Type>) -> Result<Value> {
+        match enum_hint(type_hint) {
+            Some(type_) => enum_value(type_, &self),
+            None => Ok(Value::String(self.into_bytes())),
+        }
     }
 }
 
+/// The named value when written into an enum column.
 impl ToSql for &str {
-    fn to_sql(self, _type_hint: Option<&Type>) -> Result<Value> {
-        Ok(Value::String(self.as_bytes().to_vec()))
+    fn to_sql(self, type_hint: Option<&Type>) -> Result<Value> {
+        match enum_hint(type_hint) {
+            Some(type_) => enum_value(type_, self),
+            None => Ok(Value::String(self.as_bytes().to_vec())),
+        }
     }
 }
 

@@ -37,16 +37,12 @@ async fn count(client: &Client, table: &str) -> u64 {
 // 1. Unsupported types
 // ---------------------------------------------------------------------------------------------
 
-/// Queries whose result type nativeclick cannot read (yet). Each must be an error, never rows.
+/// Queries whose result type nativeclick cannot read: aggregate function states have no generic
+/// format. Each must be an error, never rows.
 const UNSUPPORTED: &[&str] = &[
-    "SELECT NULL AS x",
-    "SELECT [] AS x",
-    "SELECT CAST((1, 'a') AS Tuple(a Int32, b String)) AS x",
-    "SELECT toDate32('2020-01-01') AS x",
-    "SELECT toTime('12:00:00') AS x",
-    "SELECT 1::Variant(UInt8, String) AS x",
-    "SELECT '{\"a\":1}'::JSON AS x",
-    "SELECT CAST('a,b' AS Enum8('a,b' = 1)) AS x",
+    "SELECT sumState(number) AS x FROM numbers(10)",
+    "SELECT uniqState(number) AS x FROM numbers(10)",
+    "SELECT [sumState(1)] AS x",
 ];
 
 #[tokio::test]
@@ -79,23 +75,27 @@ async fn unsupported_type_is_an_error_not_an_empty_result() {
 async fn unsupported_type_error_names_the_type() {
     let client = super::get_client().await;
     let error = bounded(
-        "SELECT NULL",
-        client.query_collect::<RawRow>("SELECT NULL AS x"),
+        "state",
+        client.query_collect::<RawRow>("SELECT sumState(1) AS x"),
     )
     .await
     .unwrap_err();
     assert!(
-        error.to_string().contains("Nothing"),
-        "error should name the type: {error}"
+        error.to_string().contains("AggregateFunction")
+            && error.to_string().contains("finalizeAggregation"),
+        "error should name the type and the way out: {error}"
     );
 }
 
 #[tokio::test]
 async fn later_calls_report_why_the_connection_closed() {
     let client = super::get_client().await;
-    let first = bounded("first", client.query_collect::<RawRow>("SELECT NULL AS x"))
-        .await
-        .unwrap_err();
+    let first = bounded(
+        "first",
+        client.query_collect::<RawRow>("SELECT sumState(1) AS x"),
+    )
+    .await
+    .unwrap_err();
 
     // Every later call fails at once, with the same cause, on this handle and its clones.
     for _ in 0..3 {
@@ -127,7 +127,11 @@ async fn queries_queued_behind_a_fatal_one_get_the_error() {
     // Started together, so most of them are queued when the first one kills the connection.
     let mut queries = vec![tokio::spawn({
         let client = client.clone();
-        async move { client.query_collect::<RawRow>("SELECT NULL AS x").await }
+        async move {
+            client
+                .query_collect::<RawRow>("SELECT sumState(1) AS x")
+                .await
+        }
     })];
     for _ in 0..20 {
         let client = client.clone();

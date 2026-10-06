@@ -13,26 +13,40 @@ use uuid::Uuid;
 
 use super::Type;
 
+/// Writes then reads `values`, with the String layouts of before and after revision 54492; both
+/// must give the same values back and consume exactly what was written.
 async fn roundtrip_values(type_: &Type, values: &[Value]) -> Result<Vec<Value>> {
-    let mut output = vec![];
-
-    let mut state = SerializerState {};
-    type_.serialize_prefix(&mut output, &mut state).await?;
-    type_
-        .serialize_column(values.to_vec(), &mut output, &mut state)
-        .await?;
-    for x in &output {
-        print!("{x:02X}");
+    let mut results = vec![];
+    for revision in [54491, 54493] {
+        let mut output = vec![];
+        let mut state = SerializerState::new(revision);
+        let prefix_values: &[Value] = if type_.contains_dynamic() {
+            values
+        } else {
+            &[]
+        };
+        type_
+            .serialize_prefix(prefix_values, &mut output, &mut state)
+            .await?;
+        type_
+            .serialize_column(values.to_vec(), &mut output, &mut state)
+            .await?;
+        let length = output.len() as u64;
+        let mut input = Cursor::new(output);
+        let mut state = DeserializerState::new(revision);
+        type_.deserialize_prefix(&mut input, &mut state).await?;
+        let deserialized = type_
+            .deserialize_column(&mut input, values.len(), &mut state)
+            .await?;
+        assert_eq!(
+            input.position(),
+            length,
+            "{type_} at {revision}: bytes left"
+        );
+        results.push(deserialized);
     }
-    println!();
-    let mut input = Cursor::new(output);
-    let mut state = DeserializerState {};
-    type_.deserialize_prefix(&mut input, &mut state).await?;
-    let deserialized = type_
-        .deserialize_column(&mut input, values.len(), &mut state)
-        .await?;
-
-    Ok(deserialized)
+    assert_eq!(results[0], results[1], "{type_}: revisions disagree");
+    Ok(results.pop().unwrap())
 }
 
 #[tokio::test]
@@ -843,5 +857,157 @@ async fn roundtrip_geo() {
         roundtrip_values(&Type::MultiPolygon, &values[..])
             .await
             .unwrap()
+    );
+}
+
+#[tokio::test]
+async fn roundtrip_new_scalar_types() {
+    use crate::Date32;
+    for (type_, values) in [
+        (Type::Bool, vec![Value::Bool(true), Value::Bool(false)]),
+        (
+            Type::Date32,
+            vec![
+                Value::Date32(Date32(-25567)),
+                Value::Date32(Date32(120_000)),
+            ],
+        ),
+        (Type::Time, vec![Value::Time(-5), Value::Time(90_000)]),
+        (
+            Type::Time64(6),
+            vec![Value::Time64(6, -1), Value::Time64(6, 86_400_000_000)],
+        ),
+        (
+            Type::Interval(super::IntervalKind::Day),
+            vec![Value::Int64(-3), Value::Int64(7)],
+        ),
+        (Type::Nothing, vec![Value::Null, Value::Null]),
+        (
+            Type::SimpleAggregateFunction("sum".into(), Box::new(Type::UInt64)),
+            vec![Value::UInt64(1), Value::UInt64(2)],
+        ),
+        (
+            Type::Json(String::new()),
+            vec![Value::string("{\"a\":1}"), Value::string("{}")],
+        ),
+    ] {
+        assert_eq!(
+            roundtrip_values(&type_, &values).await.unwrap(),
+            values,
+            "{type_}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn roundtrip_strings_in_every_container() {
+    let s = |x: &str| Value::string(x);
+    for (type_, values) in [
+        ("String", vec![s("ab"), s(""), s("c\0d"), s("é")]),
+        ("Nullable(String)", vec![s("x"), Value::Null, s("")]),
+        (
+            "Array(String)",
+            vec![Value::Array(vec![s("a"), s("bc")]), Value::Array(vec![])],
+        ),
+        (
+            "Map(String, String)",
+            vec![Value::Map(vec![s("k")], vec![s("v")])],
+        ),
+        (
+            "Tuple(a String, b UInt8)",
+            vec![Value::Tuple(vec![s("t"), Value::UInt8(1)])],
+        ),
+        ("LowCardinality(String)", vec![s("a"), s("b"), s("a")]),
+        (
+            "LowCardinality(Nullable(String))",
+            vec![s("a"), Value::Null],
+        ),
+        (
+            "Array(LowCardinality(String))",
+            vec![Value::Array(vec![s("x"), s("x")])],
+        ),
+    ] {
+        let type_: Type = type_.parse().unwrap();
+        assert_eq!(
+            roundtrip_values(&type_, &values).await.unwrap(),
+            values,
+            "{type_}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn roundtrip_variant_and_dynamic() {
+    use crate::DynamicValue;
+    let dynamic = |t: Type, v: Value| Value::Dynamic(Box::new(DynamicValue::new(t, v)));
+    let variant: Type = "Variant(Array(UInt8), String, UInt64)".parse().unwrap();
+    let values = vec![
+        dynamic(Type::UInt64, Value::UInt64(42)),
+        Value::Null,
+        dynamic(Type::String, Value::string("abc")),
+        dynamic(
+            Type::Array(Box::new(Type::UInt8)),
+            Value::Array(vec![Value::UInt8(1)]),
+        ),
+    ];
+    assert_eq!(roundtrip_values(&variant, &values).await.unwrap(), values);
+
+    // Plain values are written as the first variant that accepts them.
+    let plain = vec![Value::UInt64(7), Value::string("s")];
+    let read = roundtrip_values(&variant, &plain).await.unwrap();
+    assert_eq!(read[0], dynamic(Type::UInt64, Value::UInt64(7)));
+    assert_eq!(read[1], dynamic(Type::String, Value::string("s")));
+
+    let values = vec![
+        dynamic(Type::Int32, Value::Int32(-1)),
+        Value::Null,
+        dynamic(Type::String, Value::string("x")),
+        dynamic(Type::Int32, Value::Int32(5)),
+        dynamic(
+            "Array(Nullable(String))".parse().unwrap(),
+            Value::Array(vec![Value::Null]),
+        ),
+    ];
+    for type_ in [
+        "Dynamic",
+        "Dynamic(max_types=4)",
+        "Array(Dynamic)",
+        "Tuple(Dynamic, UInt8)",
+    ] {
+        let type_: Type = type_.parse().unwrap();
+        let values = match &type_ {
+            Type::Array(_) => vec![Value::Array(values.clone()), Value::Array(vec![])],
+            Type::Tuple(_) => values
+                .iter()
+                .map(|x| Value::Tuple(vec![x.clone(), Value::UInt8(1)]))
+                .collect(),
+            _ => values.clone(),
+        };
+        assert_eq!(
+            roundtrip_values(&type_, &values).await.unwrap(),
+            values,
+            "{type_}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn roundtrip_geometry() {
+    use crate::{DynamicValue, Point, Polygon, Ring};
+    let dynamic = |t: Type, v: Value| Value::Dynamic(Box::new(DynamicValue::new(t, v)));
+    let ring = Ring(vec![Point([1.0, 2.0]), Point([3.0, 4.0])]);
+    let values = vec![
+        dynamic(Type::Point, Value::Point(Point([1.5, -2.5]))),
+        dynamic(Type::LineString, Value::Ring(ring.clone())),
+        dynamic(Type::Ring, Value::Ring(ring.clone())),
+        dynamic(
+            Type::MultiLineString,
+            Value::Polygon(Polygon(vec![ring.clone()])),
+        ),
+        Value::Null,
+    ];
+    assert_eq!(
+        roundtrip_values(&Type::Geometry, &values).await.unwrap(),
+        values
     );
 }

@@ -4,8 +4,8 @@ use tokio::io::AsyncReadExt;
 use uuid::Uuid;
 
 use crate::{
-    Date, DateTime, DynDateTime64, Result, deserialize_bf16_from_bits, i256, io::ClickhouseRead,
-    u256, values::Value,
+    Date, Date32, DateTime, DynDateTime64, Result, deserialize_bf16_from_bits, i256,
+    io::ClickhouseRead, u256, values::Value,
 };
 
 use super::{Deserializer, DeserializerState, Type};
@@ -19,7 +19,7 @@ impl Deserializer for SizedDeserializer {
         rows: usize,
         _state: &mut DeserializerState,
     ) -> Result<Vec<Value>> {
-        let mut out = Vec::with_capacity(rows);
+        let mut out = Vec::with_capacity(rows.min(1 << 16));
         for _ in 0..rows {
             out.push(match type_ {
                 Type::Int8 => Value::Int8(reader.read_i8().await?),
@@ -75,7 +75,15 @@ impl Deserializer for SizedDeserializer {
                 }
                 Type::Enum8(_) => Value::Enum8(reader.read_i8().await?),
                 Type::Enum16(_) => Value::Enum16(reader.read_i16_le().await?),
-                _ => unimplemented!(),
+                Type::Bool => Value::Bool(reader.read_u8().await? != 0),
+                Type::Date32 => Value::Date32(Date32(reader.read_i32_le().await?)),
+                Type::Time => Value::Time(reader.read_i32_le().await?),
+                Type::Time64(precision) => Value::Time64(*precision, reader.read_i64_le().await?),
+                _ => {
+                    return Err(crate::NativeclickError::DeserializeError(format!(
+                        "not a fixed-size type: {type_}"
+                    )));
+                }
             });
         }
         Ok(out)

@@ -5,6 +5,7 @@ use thiserror::Error;
 use crate::Type;
 
 #[derive(Error, Debug)]
+#[non_exhaustive]
 pub enum NativeclickError {
     #[error("no rows received when expecting at least one row")]
     MissingRow,
@@ -41,9 +42,21 @@ pub enum NativeclickError {
     Io(#[from] std::io::Error),
     #[error("utf-8 conversion error: {0}")]
     Utf8(#[from] FromUtf8Error),
+    #[error("timed out")]
+    Timeout,
 }
 
 impl NativeclickError {
+    /// Adds the column name to deserialization errors raised while reading a block.
+    pub(crate) fn with_column_name_owned(self, name: &str) -> Self {
+        match self {
+            NativeclickError::DeserializeError(e) | NativeclickError::TypeParseError(e) => {
+                NativeclickError::DeserializeError(format!("column {name}: {e}"))
+            }
+            x => x,
+        }
+    }
+
     pub fn with_column_name(self, name: &'static str) -> Self {
         match self {
             NativeclickError::DeserializeError(e) => {
@@ -89,6 +102,7 @@ impl Clone for NativeclickError {
             }
             Self::Io(arg0) => Self::Io(std::io::Error::new(arg0.kind(), format!("{arg0}"))),
             Self::Utf8(arg0) => Self::Utf8(arg0.clone()),
+            Self::Timeout => Self::Timeout,
         }
     }
 }

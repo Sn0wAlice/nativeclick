@@ -12,24 +12,21 @@ use super::*;
 
 impl FromSql for bool {
     fn from_sql(type_: &Type, value: Value) -> Result<Self> {
-        if !matches!(type_, Type::UInt8) {
-            return Err(unexpected_type(type_));
-        }
         match value {
+            Value::Bool(x) => Ok(x),
             Value::UInt8(x) => Ok(x != 0),
-            _ => unimplemented!(),
+            _ => Err(unexpected_type(type_)),
         }
     }
 }
 
+/// Also reads `Bool` columns (as 0 or 1), as before they had their own type.
 impl FromSql for u8 {
     fn from_sql(type_: &Type, value: Value) -> Result<Self> {
-        if !matches!(type_, Type::UInt8) {
-            return Err(unexpected_type(type_));
-        }
         match value {
             Value::UInt8(x) => Ok(x),
-            _ => unimplemented!(),
+            Value::Bool(x) => Ok(x as u8),
+            _ => Err(unexpected_type(type_)),
         }
     }
 }
@@ -41,7 +38,7 @@ impl FromSql for u16 {
         }
         match value {
             Value::UInt16(x) => Ok(x),
-            _ => unimplemented!(),
+            _ => Err(unexpected_type(type_)),
         }
     }
 }
@@ -53,7 +50,7 @@ impl FromSql for u32 {
         }
         match value {
             Value::UInt32(x) => Ok(x),
-            _ => unimplemented!(),
+            _ => Err(unexpected_type(type_)),
         }
     }
 }
@@ -65,7 +62,7 @@ impl FromSql for u64 {
         }
         match value {
             Value::UInt64(x) => Ok(x),
-            _ => unimplemented!(),
+            _ => Err(unexpected_type(type_)),
         }
     }
 }
@@ -77,31 +74,33 @@ impl FromSql for u128 {
         }
         match value {
             Value::UInt128(x) => Ok(x),
-            _ => unimplemented!(),
+            _ => Err(unexpected_type(type_)),
         }
     }
 }
 
+/// Also the raw value of an `Enum8`.
 impl FromSql for i8 {
     fn from_sql(type_: &Type, value: Value) -> Result<Self> {
-        if !matches!(type_, Type::Int8) {
+        if !matches!(type_, Type::Int8 | Type::Enum8(_)) {
             return Err(unexpected_type(type_));
         }
         match value {
-            Value::Int8(x) => Ok(x),
-            _ => unimplemented!(),
+            Value::Int8(x) | Value::Enum8(x) => Ok(x),
+            _ => Err(unexpected_type(type_)),
         }
     }
 }
 
+/// Also the raw value of an `Enum16`.
 impl FromSql for i16 {
     fn from_sql(type_: &Type, value: Value) -> Result<Self> {
-        if !matches!(type_, Type::Int16) {
+        if !matches!(type_, Type::Int16 | Type::Enum16(_)) {
             return Err(unexpected_type(type_));
         }
         match value {
-            Value::Int16(x) => Ok(x),
-            _ => unimplemented!(),
+            Value::Int16(x) | Value::Enum16(x) => Ok(x),
+            _ => Err(unexpected_type(type_)),
         }
     }
 }
@@ -113,7 +112,7 @@ impl FromSql for i32 {
         }
         match value {
             Value::Int32(x) => Ok(x),
-            _ => unimplemented!(),
+            _ => Err(unexpected_type(type_)),
         }
     }
 }
@@ -125,7 +124,7 @@ impl FromSql for i64 {
         }
         match value {
             Value::Int64(x) => Ok(x),
-            _ => unimplemented!(),
+            _ => Err(unexpected_type(type_)),
         }
     }
 }
@@ -137,7 +136,7 @@ impl FromSql for i128 {
         }
         match value {
             Value::Int128(x) => Ok(x),
-            _ => unimplemented!(),
+            _ => Err(unexpected_type(type_)),
         }
     }
 }
@@ -149,7 +148,7 @@ impl FromSql for f32 {
         }
         match value {
             Value::Float32(x) => Ok(x),
-            _ => unimplemented!(),
+            _ => Err(unexpected_type(type_)),
         }
     }
 }
@@ -161,7 +160,7 @@ impl FromSql for f64 {
         }
         match value {
             Value::Float64(x) => Ok(x),
-            _ => unimplemented!(),
+            _ => Err(unexpected_type(type_)),
         }
     }
 }
@@ -174,19 +173,30 @@ impl FromSql for bf16 {
         }
         match value {
             Value::BFloat16(x) => Ok(x),
-            _ => unimplemented!(),
+            _ => Err(unexpected_type(type_)),
         }
     }
 }
 
+/// Also the name of an `Enum8`/`Enum16` value.
 impl FromSql for String {
     fn from_sql(type_: &Type, value: Value) -> Result<Self> {
-        if !matches!(type_, Type::String | Type::FixedString(_)) {
-            return Err(unexpected_type(type_));
-        }
-        match value {
-            Value::String(x) => Ok(String::from_utf8(x)?),
-            _ => unimplemented!(),
+        let enum_name = |name: Option<&String>| {
+            name.cloned().ok_or_else(|| {
+                NativeclickError::DeserializeError(format!("value not declared in {type_}"))
+            })
+        };
+        match (type_, value) {
+            (Type::Enum8(items), Value::Enum8(x)) => {
+                enum_name(items.iter().find(|i| i.1 == x).map(|i| &i.0))
+            }
+            (Type::Enum16(items), Value::Enum16(x)) => {
+                enum_name(items.iter().find(|i| i.1 == x).map(|i| &i.0))
+            }
+            (Type::String | Type::FixedString(_) | Type::Json(_), Value::String(x)) => {
+                Ok(String::from_utf8(x)?)
+            }
+            _ => Err(unexpected_type(type_)),
         }
     }
 }
@@ -209,9 +219,9 @@ impl<T: FromSql + 'static> FromSql for Vec<T> {
             }
             Value::Array(x) => Ok(x
                 .into_iter()
-                .map(|x| T::from_sql(subtype, x))
+                .map(|x| from_sql_resolved(subtype, x))
                 .collect::<Result<Vec<_>>>()?),
-            _ => unimplemented!(),
+            _ => Err(unexpected_type(type_)),
         }
     }
 }
@@ -229,11 +239,11 @@ impl<T: FromSql + Hash + Eq, Y: FromSql> FromSql for HashMap<T, Y> {
             Value::Map(x, y) => {
                 let mut out = HashMap::new();
                 for (x, y) in x.into_iter().zip(y) {
-                    out.insert(T::from_sql(x_type, x)?, Y::from_sql(y_type, y)?);
+                    out.insert(from_sql_resolved(x_type, x)?, from_sql_resolved(y_type, y)?);
                 }
                 Ok(out)
             }
-            _ => unimplemented!(),
+            _ => Err(unexpected_type(type_)),
         }
     }
 }
@@ -251,11 +261,11 @@ impl<T: FromSql + Ord, Y: FromSql> FromSql for BTreeMap<T, Y> {
             Value::Map(x, y) => {
                 let mut out = BTreeMap::new();
                 for (x, y) in x.into_iter().zip(y) {
-                    out.insert(T::from_sql(x_type, x)?, Y::from_sql(y_type, y)?);
+                    out.insert(from_sql_resolved(x_type, x)?, from_sql_resolved(y_type, y)?);
                 }
                 Ok(out)
             }
-            _ => unimplemented!(),
+            _ => Err(unexpected_type(type_)),
         }
     }
 }
@@ -273,24 +283,25 @@ impl<T: FromSql + Hash + Eq, Y: FromSql> FromSql for IndexMap<T, Y> {
             Value::Map(x, y) => {
                 let mut out = IndexMap::new();
                 for (x, y) in x.into_iter().zip(y) {
-                    out.insert(T::from_sql(x_type, x)?, Y::from_sql(y_type, y)?);
+                    out.insert(from_sql_resolved(x_type, x)?, from_sql_resolved(y_type, y)?);
                 }
                 Ok(out)
             }
-            _ => unimplemented!(),
+            _ => Err(unexpected_type(type_)),
         }
     }
 }
 
 impl<T: FromSql> FromSql for Option<T> {
     fn from_sql(type_: &Type, value: Value) -> Result<Self> {
-        let subtype = match type_ {
-            Type::Nullable(x) => x.strip_low_cardinality(),
-            x => x,
-        };
+        Self::from_sql_column(type_, value)
+    }
+
+    fn from_sql_column(type_: &Type, value: Value) -> Result<Self> {
+        let subtype = type_.unnull().unwrap_or(type_);
         match value {
             Value::Null => Ok(None),
-            x => Ok(Some(T::from_sql(subtype, x)?)),
+            x => Ok(Some(T::from_sql_column(subtype, x)?)),
         }
     }
 }
@@ -312,11 +323,11 @@ impl<T: FromSql + Default + Copy, const N: usize> FromSql for [T; N] {
                 }
                 let mut out = [T::default(); N];
                 for (i, value) in x.into_iter().enumerate() {
-                    out[i] = T::from_sql(subtype, value)?;
+                    out[i] = from_sql_resolved(subtype, value)?;
                 }
                 Ok(out)
             }
-            _ => unimplemented!(),
+            _ => Err(unexpected_type(type_)),
         }
     }
 }
@@ -338,7 +349,7 @@ macro_rules! tuple_impls {
                     };
                     let values = match value {
                         Value::Tuple(n) => n,
-                        _ => unimplemented!(),
+                        _ => return Err(unexpected_type(type_)),
                     };
                     if values.len() != subtype.len() {
                         return Err(NativeclickError::DeserializeError(format!("unexpected type: mismatch tuple length expected {}, got {}", subtype.len(), values.len())));
@@ -349,7 +360,7 @@ macro_rules! tuple_impls {
                     let mut deque = ::std::collections::VecDeque::from(values);
                     Ok((
                         $(
-                            $name::from_sql(subtype[$n].strip_low_cardinality(), deque.pop_front().unwrap())?,
+                            from_sql_resolved(&subtype[$n], deque.pop_front().unwrap())?,
                         )+
                     ))
                 }

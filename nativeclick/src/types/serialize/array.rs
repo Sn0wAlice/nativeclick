@@ -27,10 +27,20 @@ impl ArraySerializerGeneric for ArraySerializer {
 impl<T: ArraySerializerGeneric + 'static> Serializer for T {
     async fn write_prefix<W: ClickhouseWrite>(
         type_: &Type,
+        values: &[Value],
         writer: &mut W,
         state: &mut SerializerState,
     ) -> Result<()> {
-        T::inner_type(type_).serialize_prefix(writer, state).await
+        let inner = T::inner_type(type_);
+        let items = if inner.contains_dynamic() {
+            values
+                .iter()
+                .flat_map(|x| Self::values(x.clone()))
+                .collect()
+        } else {
+            vec![]
+        };
+        inner.serialize_prefix(&items, writer, state).await
     }
 
     async fn write<W: ClickhouseWrite>(

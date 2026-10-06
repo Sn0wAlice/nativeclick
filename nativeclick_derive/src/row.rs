@@ -488,7 +488,7 @@ fn deserialize_map(
                 None => {
                     let field_ty = field.ty;
                     let span = field.original.span();
-                    quote_spanned!(span=> <#field_ty as ::nativeclick::FromSql>::from_sql(_type_.strip_low_cardinality(), _value).map_err(|e| e.with_column_name(#deser_name))?)
+                    quote_spanned!(span=> ::nativeclick::from_sql_resolved::<#field_ty>(_type_, _value).map_err(|e| e.with_column_name(#deser_name))?)
                 }
                 Some(path) => {
                     let span = field.original.span();

@@ -3,12 +3,17 @@
 ///
 /// See <https://clickhouse.com/codebrowser/ClickHouse/src/IO/Progress.h.html>
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct Progress {
     pub read_rows: u64,
     pub read_bytes: u64,
     pub new_total_rows_to_read: u64,
     pub new_written_rows: Option<u64>,
     pub new_written_bytes: Option<u64>,
+    /// Since protocol revision 54463.
+    pub new_total_bytes_to_read: Option<u64>,
+    /// Server-side query time, in nanoseconds. Since protocol revision 54460.
+    pub elapsed_ns: Option<u64>,
 }
 impl std::ops::Add for Progress {
     type Output = Progress;
@@ -26,6 +31,11 @@ impl std::ops::Add for Progress {
             new_total_rows_to_read: self.new_total_rows_to_read + rhs.new_total_rows_to_read,
             new_written_rows: sum_opt(self.new_written_rows, rhs.new_written_rows),
             new_written_bytes: sum_opt(self.new_written_bytes, rhs.new_written_bytes),
+            new_total_bytes_to_read: sum_opt(
+                self.new_total_bytes_to_read,
+                rhs.new_total_bytes_to_read,
+            ),
+            elapsed_ns: sum_opt(self.elapsed_ns, rhs.elapsed_ns),
         }
     }
 }

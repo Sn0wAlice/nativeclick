@@ -27,6 +27,8 @@ Image testée : `clickhouse/clickhouse-server:<tag>`, sur arm64. Les 13 tests d'
 | 26.7 | stable | 13/13 | ✅ | |
 | 26.8 | stable | 13/13 | ✅ | |
 | 26.9 | stable | 13/13 | ✅ | cassé avant le support ZSTD (1/13), voir ci-dessous |
+| 26.10 | stable | 61/61 | ✅ | testé le 2026-11-28 avec nativeclick 0.26.9 (suite actuelle de 61 tests, révision négociée 54493) |
+| 26.11 | stable | 61/61 | ✅ | testé le 2026-11-28 avec nativeclick 0.26.9 (suite actuelle de 61 tests, révision négociée 54493) |
 
 ## Ce qui cassait sur 26.9 (corrigé)
 

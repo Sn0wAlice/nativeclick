@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.26.11
+
+Targets **ClickHouse 26.11** and supports **26.1 to 26.11**, the targeted version and the 10 releases before it, all tested in CI. 25.11 and 25.12 leave the window.
+
+- Tested against ClickHouse 26.10 and 26.11: the whole suite passes, no client change was needed.
+- The client still speaks native protocol revision **54493**. 26.10 announces 54494 and 26.11 announces 54497. The revisions in between add nothing a plain client has to read, except `INSERT ... RETURNING` (54495), which is not supported yet: on these servers such a query fails with the server's `NOT_IMPLEMENTED` error.
+- The client version sent to the server is now 26.11.
+
 ## 0.26.9
 
 The first release under the new versioning: `0.MAJOR.MINOR` follows the targeted ClickHouse version. It targets **ClickHouse 26.9** and supports **25.11 to 26.9**, the targeted version and the 10 releases before it, all tested in CI.

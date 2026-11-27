@@ -40,7 +40,10 @@ pub const DBMS_MIN_PROTOCOL_VERSION_WITH_INTERNAL_QUERY_FLAG: u64 = 54486;
 pub const DBMS_MIN_PROTOCOL_VERSION_WITH_INTERSERVER_CURRENT_ROLES: u64 = 54488;
 pub const DBMS_MIN_REVISION_WITH_STRING_WITH_SIZE_STREAM_SERIALIZATION: u64 = 54492;
 
-/// Revision announced by this client (ClickHouse master; a 26.9 server answers 54492).
+/// Revision announced by this client (a 26.9 server answers 54492, 26.10 54494, 26.11 54497).
+///
+/// Kept below 54495 (`INSERT ... RETURNING`): from that revision the server may send packets
+/// while the client is still sending INSERT data, which the insert path does not read.
 ///
 /// Column formats this implies, all decoded: custom serialization kinds (54454), sparse columns
 /// (54465, Nullable at 54483), replicated columns (54482), size-stream Strings (54492).

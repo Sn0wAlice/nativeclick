@@ -4,7 +4,7 @@
 set -u
 cd "$(dirname "$0")/.."
 # Default: the supported window (targeted version + the 10 releases before it).
-VERSIONS=${*:-"25.11 25.12 26.1 26.2 26.3 26.4 26.5 26.6 26.7 26.8 26.9"}
+VERSIONS=${*:-"26.1 26.2 26.3 26.4 26.5 26.6 26.7 26.8 26.9 26.10 26.11"}
 PORT=19000
 mkdir -p docs/results
 export NATIVECLICK_TEST_ADDR=127.0.0.1:$PORT

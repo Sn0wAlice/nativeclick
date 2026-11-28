@@ -1,6 +1,6 @@
 [package]
 name = "nativeclick_derive"
-version = "0.26.9"
+version = "0.26.11"
 authors = ["Protryon <max.bruce12@gmail.com>", "Sn0wAlice <snow.alice@pm.me>"]
 edition = "2024"
 license = "MIT OR Apache-2.0"

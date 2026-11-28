@@ -6,8 +6,8 @@ Nativeclick is a pure Rust client for [ClickHouse](https://clickhouse.com/docs) 
 
 ## Versioning and compatibility
 
-- **Version scheme:** the crate version follows the ClickHouse version it targets, `0.MAJOR.MINOR`. `0.26.9` targets ClickHouse **26.9**.
-- **Supported servers:** each release supports the targeted version and **the 10 releases before it**. For `0.26.9` that is ClickHouse **25.11 to 26.9**, and CI runs the whole test suite against each of them.
+- **Version scheme:** the crate version follows the ClickHouse version it targets, `0.MAJOR.MINOR`. `0.26.11` targets ClickHouse **26.11**.
+- **Supported servers:** each release supports the targeted version and **the 10 releases before it**. For `0.26.11` that is ClickHouse **26.1 to 26.11**, and CI runs the whole test suite against each of them.
 - **Protocol:** the client speaks native protocol revision **54493**, and each connection negotiates `min(client, server)`. Every revision-dependent field and column format follows the negotiated revision, so older servers keep working.
 - **Rust:** MSRV is **1.89**, tested in CI.
 
@@ -17,12 +17,12 @@ See [CHANGELOG.md](https://github.com/Sn0wAlice/nativeclick/blob/master/CHANGELO
 
 Compared with klickhouse 0.15 (the fork point, protocol revision 54448):
 
-| | klickhouse 0.15 | nativeclick 0.26.9 |
+| | klickhouse 0.15 | nativeclick 0.26.11 |
 |---|---|---|
 | **Compatibility** | | |
 | Protocol revision | 54448 (ClickHouse 22.x era) | 54493, negotiated per connection |
 | ClickHouse 26.9 (ZSTD answers by default) | ❌ empty results, then the connection dies | ✅ |
-| Versions tested in CI | 25.8 | 25.11 → 26.9 (11 versions) |
+| Versions tested in CI | 25.8 | 26.1 → 26.11 (11 versions) |
 | Compressed answers read | LZ4 only | LZ4, ZSTD, none |
 | Sparse / replicated columns, size-stream strings | ❌ (revision too old to receive them) | ✅ |
 | **Reliability** | | |
@@ -70,7 +70,7 @@ Decoding speed of this crate's decoder before and after the 0.26.9 optimizations
 
 ```toml
 [dependencies]
-nativeclick = "0.26.9"
+nativeclick = "0.26.11"
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 ```
 
@@ -251,7 +251,7 @@ Notes:
 The integration tests need a ClickHouse server:
 
 ```sh
-docker run -d --name clickhouse -p 19000:9000 -e CLICKHOUSE_SKIP_USER_SETUP=1 --ulimit nofile=262144:262144 clickhouse/clickhouse-server:26.9
+docker run -d --name clickhouse -p 19000:9000 -e CLICKHOUSE_SKIP_USER_SETUP=1 --ulimit nofile=262144:262144 clickhouse/clickhouse-server:26.11
 export NATIVECLICK_TEST_ADDR=127.0.0.1:19000
 # export NATIVECLICK_TEST_USER=default NATIVECLICK_TEST_PASSWORD= NATIVECLICK_TEST_DATABASE=default
 cargo test --all-features -- --test-threads=1

@@ -17,11 +17,11 @@ jobs:
       matrix:
         # Supported window: the targeted ClickHouse version (crate 0.MAJOR.MINOR) and the 10
         # releases before it. Keep in sync with `MIN_SUPPORTED_VERSION` and docs/test-fork.sh.
-        clickhouse: ["25.11", "25.12", "26.1", "26.2", "26.3", "26.4", "26.5", "26.6", "26.7", "26.8", "26.9"]
+        clickhouse: ["26.1", "26.2", "26.3", "26.4", "26.5", "26.6", "26.7", "26.8", "26.9", "26.10", "26.11"]
         rust: [stable]
         include:
           # MSRV, keep in sync with `rust-version` in the crates' Cargo.toml
-          - { rust: "1.89", clickhouse: "26.9" }
+          - { rust: "1.89", clickhouse: "26.11" }
     services:
       clickhouse:
         image: clickhouse/clickhouse-server:${{ matrix.clickhouse }}
